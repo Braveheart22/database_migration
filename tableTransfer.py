@@ -10,6 +10,7 @@ src = pyodbc.connect(
     'UID=dba;'
     'PWD=sql34;'
 )
+print ("Connected to SQLA database.")
 
 dst = pyodbc.connect(
     'DRIVER={ODBC Driver 18 for SQL Server};'
@@ -18,13 +19,14 @@ dst = pyodbc.connect(
     'Trusted_Connection=yes;'
     'TrustServerCertificate=yes;'
 )
+print ("Connected to MSSQL database.")
 
 def migrate_table(table_name):
     src_cur = src.cursor()
     dst_cur = dst.cursor()
     dst_cur.fast_executemany = True
 
-    has_identity = table_name.lower() in identity_tables
+    # has_identity = table_name.lower() in identity_tables
 
     print(f"Migrating {table_name}...")
 
@@ -62,8 +64,8 @@ def migrate_table(table_name):
     elapsed = time.time() - start_time
     minutes = int(elapsed // 60)
     seconds = elapsed % 60
-    print(f"  Done. {total} rows inserted in {minutes} minutes and {seconds:.3f} seconds.\n")
+    print(f"  Done. {total} rows inserted in {minutes} minutes and {seconds:.4f} seconds.\n")
 
 
-    # --- Migrate tables one at a time for now ---
-    migrate_table('bank')
+# --- Migrate tables one at a time for now ---
+migrate_table('bank')
