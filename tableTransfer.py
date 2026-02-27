@@ -76,4 +76,4 @@ def migrate_table(table_name):
 
 
 # --- Migrate tables one at a time for now ---
-migrate_table('bank')
+migrate_table('prep')
