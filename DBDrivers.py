@@ -30,13 +30,13 @@ cursor = cnxn.cursor()
 
 # INSERTing data
 # cursor.execute("INSERT INTO bank(bank_id, name) VALUES ('bnk3', 'Bank Three')")
-cursor.execute(
-    "INSERT INTO bank (bank_id, name) VALUES (?, ?)",
-    ("bnk3", "Bank Three")
-)
-cnxn.commit()
+# cursor.execute(
+#     "INSERT INTO bank (bank_id, name) VALUES (?, ?)",
+#     ("bnk3", "Bank Three")
+# )
+# cnxn.commit()
 
 # DELETEing data
-# cursor.execute("DELETE FROM bank WHERE bank_id = ?", 'bnk3')
-# print(cursor.rowcount, 'rows deleted')
-# cnxn.commit()
+cursor.execute("DELETE FROM bank WHERE bank_id = ?", 'bnk3')
+print(cursor.rowcount, 'rows deleted')
+cnxn.commit()

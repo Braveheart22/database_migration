@@ -1,5 +1,5 @@
 import pyodbc
-import time                                                                                                                                                                                                     
+import time
 
 # --- Connections ---
 src = pyodbc.connect(
@@ -10,7 +10,7 @@ src = pyodbc.connect(
     'UID=dba;'
     'PWD=sql34;'
 )
-print ("Connected to SQLA database.")
+print("Connected to SQLA database.")
 
 dst = pyodbc.connect(
     'DRIVER={ODBC Driver 18 for SQL Server};'
@@ -19,14 +19,22 @@ dst = pyodbc.connect(
     'Trusted_Connection=yes;'
     'TrustServerCertificate=yes;'
 )
-print ("Connected to MSSQL database.")
+print("Connected to MSSQL database.")
+
+# --- Build set of tables that have identity columns in SQL Server ---
+def get_identity_tables():
+    cur = dst.cursor()
+    cur.execute("SELECT OBJECT_NAME(object_id) FROM sys.identity_columns")
+    return {row[0].lower() for row in cur.fetchall()}
+
+identity_tables = get_identity_tables()
 
 def migrate_table(table_name):
     src_cur = src.cursor()
     dst_cur = dst.cursor()
     dst_cur.fast_executemany = True
 
-    # has_identity = table_name.lower() in identity_tables
+    has_identity = table_name.lower() in identity_tables
 
     print(f"Migrating {table_name}...")
 
@@ -36,7 +44,7 @@ def migrate_table(table_name):
     params     = ', '.join(['?' for _ in columns])
     insert_sql = f"INSERT INTO {table_name} ({col_list}) VALUES ({params})"
 
-# Wipe target table before importing
+    # Wipe target table before importing
     dst_cur.execute(f"TRUNCATE TABLE {table_name}")
     dst.commit()
 
