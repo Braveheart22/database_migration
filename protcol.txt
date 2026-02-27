@@ -1,0 +1,29 @@
+  PHASE 1 - SCHEMA SETUP
+    Step 1:  Drop and recreate the SQL Server database (clean slate)
+    Step 2:  Run tables.py → generates create_tables.sql
+    Step 3:  Run create_tables.sql in SSMS
+    Step 4:  Run compareTables.py → must show 0 missing, 0 drift
+             If issues found → GOTO Phase 1A
+
+  PHASE 1A - SCHEMA REMEDIATION (run only if Phase 1 Step 4 finds issues)
+    Step 5:  Run alterTables.py → generates alter_tables.sql
+             (adds missing columns to existing tables)
+    Step 6:  Run missing table DDL for any MISSING tables in SSMS
+    Step 7:  Run alter_tables.sql in SSMS
+    Step 8:  Re-run compareTables.py → confirm clean before proceeding
+
+  PHASE 2 - DATA MIGRATION
+    Step 9:  Run allTableTransfer.py
+    Step 10: Review failed tables list
+             If failures → investigate, fix, re-run for failed tables only
+             Repeat until 0 failures (or failures are understood/accepted)
+
+  PHASE 3 - VALIDATION
+    Step 11: Run rowCountValidation.py → compare row counts SQLA vs MSSQL
+             Every table must match
+
+  PHASE 4 - POST MIGRATION
+    Step 12: Run fkConstraints.py → generates FK constraint SQL
+    Step 13: Run FK constraint SQL in SSMS
+    Step 14: Set SQL Server to FULL recovery mode
+    Step 15: Configure backup schedule
