@@ -62,6 +62,30 @@ def get_mssql_tables(conn):
     """)
     return {row[0]: row[1] for row in cur.fetchall()}
 
+# --- Get column names for a specific table from SQL Anywhere ---
+def get_sqla_columns(conn, table_name):
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT c.column_name
+        FROM SYS.SYSCOLUMN c
+        JOIN SYS.SYSTABLE t ON c.table_id = t.table_id
+        WHERE t.table_name = ?
+        ORDER BY c.column_id
+    """, table_name)
+    return [row[0] for row in cur.fetchall()]
+
+# --- Get column names for a specific table from SQL Server ---
+def get_mssql_columns(conn, table_name):
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT c.name
+        FROM sys.columns c
+        JOIN sys.tables t ON c.object_id = t.object_id
+        WHERE t.name = ?
+        ORDER BY c.column_id
+    """, table_name)
+    return [row[0] for row in cur.fetchall()]
+
 sqla  = get_sqla_tables(src)
 mssql = get_mssql_tables(dst)
 
@@ -93,5 +117,19 @@ for t in sorted(col_mismatch):
     sqla_key  = t
     mssql_key = mssql_names[t.lower()]
     print(f"  DRIFT:   {t}  (SQLA: {sqla[sqla_key]} cols, MSSQL: {mssql[mssql_key]} cols)")
+
+    sqla_cols  = get_sqla_columns(src, sqla_key)
+    mssql_cols = get_mssql_columns(dst, mssql_key)
+
+    sqla_cols_lower  = {c.lower() for c in sqla_cols}
+    mssql_cols_lower = {c.lower() for c in mssql_cols}
+
+    missing = [c for c in sqla_cols  if c.lower() not in mssql_cols_lower]
+    extra   = [c for c in mssql_cols if c.lower() not in sqla_cols_lower]
+
+    for c in missing:
+        print(f"    + MISSING in MSSQL: {c}")
+    for c in extra:
+        print(f"    - EXTRA   in MSSQL: {c}")
 
 print(f"\nDone.")
