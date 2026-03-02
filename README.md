@@ -12,8 +12,7 @@ If issues found → GOTO Phase 1A
 
 # PHASE 1A - SCHEMA REMEDIATION (run only if Phase 1 Step 4 finds issues)
 
-Step 5: Run alterTables.py → generates alter_tables.sql
-(adds missing columns to existing tables)
+Step 5: Run alterTables.py → generates alter_tables.sql (adds missing columns to existing tables)
 Step 6: Run missing table DDL for any MISSING tables in SSMS
 Step 7: Run alter_tables.sql in SSMS
 Step 8: Re-run compareTables.py → confirm clean before proceeding
