@@ -4,10 +4,10 @@ Migrating a database from SAP (Sybase) SQL Anywhere 9.0 to Microsoft SQL Server 
 
 # PHASE 1 - SCHEMA SETUP
 
-Step 1: Drop and recreate the SQL Server database (clean slate)
-Step 2: Run tables.py → generates create_tables.sql
-Step 3: Run create_tables.sql in SSMS
-Step 4: Run compareTables.py → must show 0 missing, 0 drift
+1. Drop and recreate the SQL Server database (clean slate)
+2. Run tables.py → generates create_tables.sql
+3. Run create_tables.sql in SSMS
+4. Run compareTables.py → must show 0 missing, 0 drift
 If issues found → GOTO Phase 1A
 
 # PHASE 1A - SCHEMA REMEDIATION (run only if Phase 1 Step 4 finds issues)
