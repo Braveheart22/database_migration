@@ -1,5 +1,6 @@
 # Generated migration logs
 migration_log_*.csv
+validation_log_*.csv
 
 # Generated SQL output files
 alter_tables.sql
