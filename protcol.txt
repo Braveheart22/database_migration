@@ -38,6 +38,9 @@
                1. Open migration_log_YYYYMMDD_HHMMSS.csv and review the Error
                   column to understand why each table failed.
                2. Investigate and resolve the root cause.
+                  Common causes:
+                    - Invalid column name (42S22): schema drift or wrong database
+                    - PK violation (23000): duplicate or NULL primary key in source data
                3. Run failedTableTransfer.py - automatically reads FAILED rows
                   from the most recent migration_log_*.csv and re-runs those
                   tables only. Produces its own timestamped log for the re-run.
@@ -47,9 +50,16 @@
   PHASE 3 - VALIDATION
     Step 11: Run rowCountValidation.py → compare row counts SQLA vs MSSQL
              Every table must match before proceeding.
+             Writes a timestamped validation_log_YYYYMMDD_HHMMSS.csv.
 
   PHASE 4 - POST MIGRATION
-    Step 12: Run fkConstraints.py → generates FK constraint SQL
-    Step 13: Run FK constraint SQL in SSMS
+    Step 12: Run fkConstraints.py → generates fk_constraints.sql
+             Reads all DBA-owned FK relationships from SQL Anywhere and
+             generates ALTER TABLE ... ADD CONSTRAINT ... FOREIGN KEY
+             statements for SQL Server. Handles composite (multi-column)
+             FKs. Only connects to SQLA - no changes made to SQL Server.
+    Step 13: Run fk_constraints.sql in SSMS
+             Review any errors - FK failures usually mean a referenced row
+             is missing in the parent table (data integrity issue in source).
     Step 14: Set SQL Server to FULL recovery mode
     Step 15: Configure backup schedule
