@@ -5,10 +5,10 @@
 SET NOCOUNT ON;
 GO
 
-USE LoopLoc_SchemaOnly;
+USE Loop-Loc_v1;
 GO
 
-IF DB_NAME() <> N'LoopLoc_SchemaOnly'
+IF DB_NAME() <> N'Loop-Loc_v1'
 BEGIN
     THROW 51000, 'Wrong database selected. Aborting schema build.', 1;
 END

@@ -17,7 +17,7 @@ print("Connected to SQLA database.")
 dst = pyodbc.connect(
     'DRIVER={ODBC Driver 18 for SQL Server};'
     'SERVER=Loop-DB01;'
-    'DATABASE=LoopLoc_SchemaOnly;'
+    'DATABASE=Loop-Loc_v1;'
     'Trusted_Connection=yes;'
     'TrustServerCertificate=yes;'
 )

@@ -4,7 +4,7 @@ from pathlib import Path
 INPUT_FILE = "ReloadTables.sql"
 OUTPUT_FILE = "02_Tables_SQLServer.sql"
 
-TARGET_DATABASE = "LoopLoc_SchemaOnly"
+TARGET_DATABASE = "Loop-Loc_v1"
 
 header = f"""-- Generated from SQL Anywhere dbunload ReloadTables.sql
 -- Loop-Loc migration: Schema-only (tables + PK/unique) for SQL Server 2025

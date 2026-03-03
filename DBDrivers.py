@@ -11,7 +11,7 @@ cnxn = pyodbc.connect('DSN=Catch22-17;UID=dba;PWD=sql34')
 # conn = pyodbc.connect(
 #     'DRIVER={ODBC Driver 18 for SQL Server};'
 #     'SERVER=Loop-DB01;'
-#     'DATABASE=LoopLoc_SchemaOnly;' # Subject to change when final db is up and running
+#     'DATABASE=Loop-Loc_v1;' # Subject to change when final db is up and running
 #     'Trusted_Connection=yes;'
 #       'TrustServerCertificate=yes;'
 # )
