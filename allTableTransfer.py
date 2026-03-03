@@ -1,5 +1,7 @@
+import csv
 import pyodbc
 import time
+from datetime import datetime
 
 # --- Connections ---
 src = pyodbc.connect(
@@ -114,20 +116,32 @@ def migrate_table(table_name):
     print(f"  Done. {total} rows inserted in {minutes} minutes and {seconds:.4f} seconds.\n")
     return total
 # --- Migrate all tables ---
-tables       = get_tables()
-failed       = []
-total_rows   = 0
+tables        = get_tables()
+failed        = []
+total_rows    = 0
 overall_start = time.time()
 
+log_filename = f"migration_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
 print(f"Starting migration of {len(tables)} tables...\n")
+print(f"Logging to: {log_filename}\n")
 
-for table_name in tables:
-    try:
-        rows_migrated = migrate_table(table_name)
-        total_rows += rows_migrated
-    except Exception as e:
-        print(f"  ERROR on {table_name}: {e}\n")
-        failed.append(table_name)
+with open(log_filename, 'w', newline='') as log_file:
+    writer = csv.writer(log_file)
+    writer.writerow(['Table', 'Status', 'Rows', 'Elapsed_sec'])
+
+    for table_name in tables:
+        table_start = time.time()
+        try:
+            rows_migrated = migrate_table(table_name)
+            elapsed = time.time() - table_start
+            total_rows += rows_migrated
+            writer.writerow([table_name, 'SUCCESS', rows_migrated, f'{elapsed:.4f}'])
+        except Exception as e:
+            elapsed = time.time() - table_start
+            print(f"  ERROR on {table_name}: {e}\n")
+            failed.append(table_name)
+            writer.writerow([table_name, 'FAILED', 0, f'{elapsed:.4f}'])
+        log_file.flush()
 
 overall_elapsed = time.time() - overall_start
 overall_minutes = int(overall_elapsed // 60)
@@ -140,6 +154,7 @@ print(f"Tables succeeded : {len(tables) - len(failed)}")
 print(f"Tables failed    : {len(failed)}")
 print(f"Total rows       : {total_rows:,}")
 print(f"Total time       : {overall_minutes} minutes and {overall_seconds:.4f} seconds")
+print(f"Log file         : {log_filename}")
 
 if failed:
     print(f"\nFailed tables:")
