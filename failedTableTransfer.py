@@ -1,5 +1,11 @@
+import csv
+import glob
+import csv
+import glob
 import pyodbc
 import time
+from datetime import datetime
+from datetime import datetime
 
 # --- Connections ---
 src = pyodbc.connect(
@@ -114,59 +120,46 @@ def migrate_table(table_name):
     print(f"  Done. {total} rows inserted in {minutes} minutes and {seconds:.4f} seconds.\n")
     return total
 
-# --- Re-run only failed tables ---
-failed_tables = [                                                                                                                               'bill_of_lading_header', 'bin_created', 'bin_label', 'bin_qty_removed',
-    'blue_dot_questions', 'calc_prep', 'call_log_header', 'cancel_charge',
-    'co_op_certificate', 'co_op_usage', 'comments_h', 'consumer_rebate',
-    'counter_table', 'cpu_pickup', 'cst_errors', 'customer_service',                                                                            'cv_production_date_history', 'cvln_to_lncv', 'dbcr_master',
-    'dealer_change_form', 'dealer_comments', 'dealer_credit_history',
-    'dealer_file_location', 'dealer_file_location_financial', 'dealer_Magento',
-    'dealer_organization', 'dealer_promo_cover', 'dealer_promo_liner',
-    'dealer_references', 'dealer_sales_journal', 'dealer_same_company',
-    'dealer_unique_pricing', 'deposit', 'discount', 'draft_productivity',
-    'email_que', 'error_master', 'fabric', 'fax_docs', 'fax_print_dealer',
-    'fax_que', 'fax_que_problems', 'file_type', 'flat_rates_h',
-    'flat_rates_state_h', 'hardware_bya', 'hardware_h', 'hardware_upcharge',
-    'inventory_hardware', 'inventory_history', 'inventory_in_shop',
-    'inventory_out_history', 'inventory_results', 'Inventory_Returns',
-    'language_translation', 'leads_consumers', 'leads_print_que',
-    'liner_error_report', 'liner_error_report_action_history',
-    'liner_error_report_action_master', 'liner_error_report_explanation_history',
-    'lll_users', 'ln_above_grounds', 'ln_above_grounds_Old_pricing',
-    'ln_bead_types', 'material', 'material_components', 'material_hardware',
-    'material_product', 'menu_data', 'money_recieved', 'newcard', 'pfc_history',
-    'plot_serial', 'po_materials', 'prep', 'prep_cpu_signature',
-    'prep_file_location', 'prep_multi_bleeped', 'prep_ra_hardware',
-    'prep_return', 'prepCAD', 'product', 'proforma', 'promo', 'promo_type',
-    'Purchase_Order', 'que', 'RATimer', 'replacement_cover_request', 'rtn',
-    'rtn_bluesheet', 'rtn_bluesheet_cm_type', 'rtn_bluesheet_explanation_history',
-    'rtn_bluesheet_file', 'rtn_bluesheet_rtn_reason',
-    'rtn_bluesheet_rtn_reason_category', 'rtn_bluesheet_type_return',
-    'rtn_location_areas', 'Sales_call_log', 'sales_call_log_responses',
-    'ship_via', 'slugs', 'special_discount', 'special_instructions',
-    'standards', 'standards_shape', 'standards_treatment', 'state_tax',
-    'stock_backup', 'stock_history', 'stock_history_copy', 'stock_linked_id',
-    'stock_master', 'stock_pick', 'stock_special', 'syscon', 'tan_promo',
-    'tech_bleep', 'tech_treat', 'treatment_h', 'treatment_zone_code',
-    'user_productivity', 'vendor_purchases_orders', 'warranty_claims_address',
-    'warranty_claims_type', 'warranty_header', 'warranty_header_preinvoiced',
-    'web_deposit', 'worksheet_que',
-]
+# --- Read failed tables from the most recent migration log ---
+log_files = sorted(glob.glob('migration_log_*.csv'))
+if not log_files:
+    raise FileNotFoundError("No migration log files found. Run allTableTransfer.py first.")
 
-tables       = failed_tables
-failed       = []
-total_rows   = 0
+source_log = log_files[-1]
+tables = []
+with open(source_log, newline='') as f:
+    reader = csv.DictReader(f)
+    for row in reader:
+        if row['Status'] == 'FAILED':
+            tables.append(row['Table'])
+
+print(f"Read {len(tables)} failed tables from: {source_log}\n")
+
+failed        = []
+total_rows    = 0
 overall_start = time.time()
 
+log_filename = f"migration_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
 print(f"Re-running {len(tables)} failed tables...\n")
+print(f"Logging to: {log_filename}\n")
 
-for table_name in tables:
-    try:
-        rows_migrated = migrate_table(table_name)
-        total_rows += rows_migrated
-    except Exception as e:
-        print(f"  ERROR on {table_name}: {e}\n")
-        failed.append(table_name)
+with open(log_filename, 'w', newline='') as log_file:
+    writer = csv.writer(log_file)
+    writer.writerow(['Table', 'Status', 'Rows', 'Elapsed_sec', 'Error'])
+
+    for table_name in tables:
+        table_start = time.time()
+        try:
+            rows_migrated = migrate_table(table_name)
+            elapsed = time.time() - table_start
+            total_rows += rows_migrated
+            writer.writerow([table_name, 'SUCCESS', rows_migrated, f'{elapsed:.4f}', ''])
+        except Exception as e:
+            elapsed = time.time() - table_start
+            print(f"  ERROR on {table_name}: {e}\n")
+            failed.append(table_name)
+            writer.writerow([table_name, 'FAILED', 0, f'{elapsed:.4f}', str(e)])
+        log_file.flush()
 
 overall_elapsed = time.time() - overall_start
 overall_minutes = int(overall_elapsed // 60)
@@ -179,6 +172,7 @@ print(f"Tables succeeded : {len(tables) - len(failed)}")
 print(f"Tables failed    : {len(failed)}")
 print(f"Total rows       : {total_rows:,}")
 print(f"Total time       : {overall_minutes} minutes and {overall_seconds:.4f} seconds")
+print(f"Log file         : {log_filename}")
 
 if failed:
     print(f"\nFailed tables:")
