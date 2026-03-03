@@ -29,6 +29,8 @@ Migrating a database from SAP (Sybase) SQL Anywhere 9.0 to Microsoft SQL Server 
 10. Review failed tables list
     If failures → investigate, fix, re-run for failed tables only
     Repeat until 0 failures (or failures are understood/accepted)
+    1. Review the log file for the list of reasons that the tables failed.
+    2. USe the failedTableTransfer.py file against the log file migration*log*\*.csv to run the failed tables again.
 
 # PHASE 3 - VALIDATION
 
