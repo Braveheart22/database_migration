@@ -127,7 +127,7 @@ print(f"Logging to: {log_filename}\n")
 
 with open(log_filename, 'w', newline='') as log_file:
     writer = csv.writer(log_file)
-    writer.writerow(['Table', 'Status', 'Rows', 'Elapsed_sec'])
+    writer.writerow(['Table', 'Status', 'Rows', 'Elapsed_sec', 'Error'])
 
     for table_name in tables:
         table_start = time.time()
@@ -135,12 +135,12 @@ with open(log_filename, 'w', newline='') as log_file:
             rows_migrated = migrate_table(table_name)
             elapsed = time.time() - table_start
             total_rows += rows_migrated
-            writer.writerow([table_name, 'SUCCESS', rows_migrated, f'{elapsed:.4f}'])
+            writer.writerow([table_name, 'SUCCESS', rows_migrated, f'{elapsed:.4f}', ''])
         except Exception as e:
             elapsed = time.time() - table_start
             print(f"  ERROR on {table_name}: {e}\n")
             failed.append(table_name)
-            writer.writerow([table_name, 'FAILED', 0, f'{elapsed:.4f}'])
+            writer.writerow([table_name, 'FAILED', 0, f'{elapsed:.4f}', str(e)])
         log_file.flush()
 
 overall_elapsed = time.time() - overall_start
