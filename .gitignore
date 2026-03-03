@@ -1,0 +1,7 @@
+# Generated migration logs
+migration_log_*.csv
+
+# Generated SQL output files
+alter_tables.sql
+create_tables.sql
+fk_constraints.sql
