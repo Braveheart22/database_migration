@@ -68,6 +68,9 @@ def map_type(data_type, length, scale):
     if dt in ('varchar', 'char', 'binary', 'varbinary') and length:
         if length == -1 or length >= 8000:
             return f"{mssql}(MAX)"
+        # CHAR(n) > 255 -> VARCHAR(n): avoids SQL Server 8060-byte fixed row size limit
+        if dt == 'char' and length > 255:
+            return f"VARCHAR({length})"
         return f"{mssql}({length})"
 
     if dt in ('numeric', 'decimal') and length:
