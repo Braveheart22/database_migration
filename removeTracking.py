@@ -68,6 +68,11 @@ errors  = 0
 cur = src.cursor()
 
 for proc_name, proc_defn in procedures:
+    # The LIKE query uses [tracking] as a character class in SQLA and returns
+    # more rows than expected. Skip anything without the literal marker.
+    if not proc_defn or '[tracking]' not in proc_defn:
+        continue
+
     new_defn = remove_tracking(proc_defn)
 
     # Sanity check — make sure the marker is actually gone
