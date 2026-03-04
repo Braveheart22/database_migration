@@ -85,12 +85,20 @@ def inject_tracking(proc_name, proc_defn):
     if not begin_match:
         return None, "no BEGIN found"
 
-    # SQLA requires all DECLARE statements to appear before any executable
-    # statements. Skip past every DECLARE ... ; block so we insert after them.
+    # Walk forward past whitespace, comments, and DECLARE statements.
+    # SQLA requires all DECLAREs to precede any executable statements,
+    # so we must insert AFTER the last DECLARE — not immediately after BEGIN.
     pos = begin_match.end()
-    declare_re = re.compile(r'\s*DECLARE\b[^;]*;', re.IGNORECASE)
-    while True:
-        m = declare_re.match(proc_defn, pos)
+    ws_re   = re.compile(r'\s+')
+    slc_re  = re.compile(r'--[^\n]*\n?')          # single-line comment
+    bc_re   = re.compile(r'/\*.*?\*/', re.DOTALL)  # block comment
+    decl_re = re.compile(r'DECLARE\b[^;]*;', re.IGNORECASE | re.DOTALL)
+
+    while pos < len(proc_defn):
+        m = (ws_re.match(proc_defn, pos) or
+             slc_re.match(proc_defn, pos) or
+             bc_re.match(proc_defn, pos) or
+             decl_re.match(proc_defn, pos))
         if m:
             pos = m.end()
         else:
