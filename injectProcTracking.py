@@ -80,8 +80,10 @@ def tracking_stmt(proc_name):
 # the outer procedure body and insert the tracking lines right after it.
 # ---------------------------------------------------------------------------
 def inject_tracking(proc_name, proc_defn):
-    # Find the outer BEGIN
-    begin_match = re.search(r'\bBEGIN\b', proc_defn, re.IGNORECASE)
+    # Find the procedure body BEGIN — match only at the START of a line
+    # (with optional whitespace) to avoid matching 'begin' used as a
+    # parameter name or inside a cursor SELECT in the middle of a line.
+    begin_match = re.search(r'(?:^|\n)\s*BEGIN\b', proc_defn, re.IGNORECASE)
     if not begin_match:
         return None, "no BEGIN found"
 
@@ -174,6 +176,16 @@ for proc_name, proc_defn in procedures:
     except Exception as e:
         src.rollback()
         print(f"  ERROR {proc_name:<40} {e}")
+        # Print the 10 lines around the injection point to aid diagnosis
+        lines = new_defn.splitlines()
+        marker = next((i for i, l in enumerate(lines) if '[tracking]' in l), None)
+        if marker is not None:
+            start = max(0, marker - 3)
+            end   = min(len(lines), marker + 8)
+            print(f"         --- generated SQL around injection point ---")
+            for i, l in enumerate(lines[start:end], start=start+1):
+                print(f"         {i:>4}: {l}")
+            print(f"         ---")
         skipped_err += 1
 
 src.close()
