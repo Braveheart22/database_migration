@@ -85,9 +85,12 @@ with open('fk_constraints.sql', 'w') as f:
         child_cols  = ', '.join(f'[{c}]' for c in fk['child_cols'])
         parent_cols = ', '.join(f'[{c}]' for c in fk['parent_cols'])
 
+        # Prefix with table name to ensure uniqueness across the database.
+        # SQLA scopes constraint names per-table; SQL Server requires global uniqueness.
+        constraint_name = f"FK_{child_table}_{fkeyname}"
         stmt = (
             f"ALTER TABLE [dbo].[{child_table}]\n"
-            f"    ADD CONSTRAINT [{fkeyname}]\n"
+            f"    ADD CONSTRAINT [{constraint_name}]\n"
             f"    FOREIGN KEY ({child_cols})\n"
             f"    REFERENCES [dbo].[{fk['parent_table']}] ({parent_cols});\n"
             f"GO\n\n"
