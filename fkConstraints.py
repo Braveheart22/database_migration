@@ -32,12 +32,12 @@ def get_foreign_keys(conn):
     cur = conn.cursor()
     cur.execute("""
         SELECT
-            fk.fkeyname,
+            fk.role,
             ct.table_name  AS child_table,
             cc.column_name AS child_column,
             pt.table_name  AS parent_table,
             pc.column_name AS parent_column,
-            fkcol.fkcol_sequence
+            fkcol.foreign_column_id
         FROM SYS.SYSFOREIGNKEY  fk
         JOIN SYS.SYSTABLE        ct    ON fk.foreign_table_id       = ct.table_id
         JOIN SYS.SYSTABLE        pt    ON fk.primary_table_id        = pt.table_id
@@ -49,7 +49,7 @@ def get_foreign_keys(conn):
                                       AND fkcol.primary_column_id    = pc.column_id
         JOIN SYS.SYSUSERPERM     u     ON ct.creator                 = u.user_id
         WHERE u.user_name = 'DBA'
-        ORDER BY ct.table_name, fk.fkeyname, fkcol.fkcol_sequence
+        ORDER BY ct.table_name, fk.role, fkcol.foreign_column_id
     """)
     return cur.fetchall()
 
