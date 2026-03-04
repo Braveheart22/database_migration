@@ -91,11 +91,10 @@ def inject_tracking(proc_name, proc_defn):
         + proc_defn[insert_pos:]
     )
 
-    # SQL Anywhere uses CREATE OR REPLACE PROCEDURE to update in place
-    # The existing proc_defn starts with CREATE PROCEDURE — replace that prefix
+    # ALTER PROCEDURE is the correct way to modify an existing procedure in SQLA 9
     new_defn = re.sub(
         r'^CREATE\s+PROCEDURE\b',
-        'CREATE OR REPLACE PROCEDURE',
+        'ALTER PROCEDURE',
         new_defn,
         count=1,
         flags=re.IGNORECASE
