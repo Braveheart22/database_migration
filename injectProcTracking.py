@@ -2,12 +2,16 @@ import pyodbc
 import re
 
 src = pyodbc.connect(
+    # 'DRIVER={SQL Anywhere 17};'
+    # 'HOST=192.168.250.34;'
+    # 'SERVER=Emmitt;'
+    # 'DATABASE=Smith;'
+    # 'UID=dba;'
+    # 'PWD=sql34;'
     'DRIVER={SQL Anywhere 17};'
-    'HOST=192.168.250.34;'
-    'SERVER=Emmitt;'
-    'DATABASE=Smith;'
+    'DSN=Local9;'
     'UID=dba;'
-    'PWD=sql34;'
+    'PWD=sql34'
 )
 
 TRACKING_TABLE = 'proc_usage_log'
@@ -76,19 +80,27 @@ def tracking_stmt(proc_name):
 # the outer procedure body and insert the tracking lines right after it.
 # ---------------------------------------------------------------------------
 def inject_tracking(proc_name, proc_defn):
-    # Find the first standalone BEGIN after the closing paren of the parameter list
-    # We search for BEGIN as a whole word (not inside a string literal).
-    pattern = re.compile(r'\bBEGIN\b', re.IGNORECASE)
-    match = pattern.search(proc_defn)
-    if not match:
+    # Find the outer BEGIN
+    begin_match = re.search(r'\bBEGIN\b', proc_defn, re.IGNORECASE)
+    if not begin_match:
         return None, "no BEGIN found"
 
-    insert_pos = match.end()
+    # SQLA requires all DECLARE statements to appear before any executable
+    # statements. Skip past every DECLARE ... ; block so we insert after them.
+    pos = begin_match.end()
+    declare_re = re.compile(r'\s*DECLARE\b[^;]*;', re.IGNORECASE)
+    while True:
+        m = declare_re.match(proc_defn, pos)
+        if m:
+            pos = m.end()
+        else:
+            break
+
     new_defn = (
-        proc_defn[:insert_pos]
+        proc_defn[:pos]
         + "\n"
         + tracking_stmt(proc_name)
-        + proc_defn[insert_pos:]
+        + proc_defn[pos:]
     )
 
     # ALTER PROCEDURE is the correct way to modify an existing procedure in SQLA 9
