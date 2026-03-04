@@ -81,17 +81,43 @@ Migrating a database from SAP (Sybase) SQL Anywhere 9.0 to Microsoft SQL Server 
 17. Run `create_users.sql` in SSMS
 18. Notify users to change their passwords on first login
 
-# PHASE 6 - STORED PROCEDURE MIGRATION
+# PHASE 6 - TRIGGER MIGRATION
 
-19. Review DBA-owned stored procedures in SQL Anywhere (178 total)
-    ```sql
-    SELECT p.proc_name, p.proc_defn
-    FROM SYS.SYSPROCEDURE p
-    JOIN SYS.SYSUSERPERM u ON p.creator = u.user_id
-    WHERE u.user_name = 'DBA'
-    ORDER BY p.proc_name
-    ```
-20. Extract and translate procedures to T-SQL — key syntax differences:
+19. Run `extractTriggers.py` → generates `sqla_triggers_source.sql`
+    - Extracts all DBA-owned trigger definitions from SQL Anywhere
+    - Output is for reference only — will NOT run in SQL Server
+    - BEFORE triggers are flagged with a WARNING comment
+20. Convert triggers to T-SQL — key syntax differences:
+
+    | SQL Anywhere | SQL Server T-SQL |
+    |---|---|
+    | `BEFORE` trigger | `INSTEAD OF` trigger |
+    | `AFTER` trigger | `AFTER` trigger |
+    | `REFERENCING OLD AS old NEW AS new` | Uses `deleted` / `inserted` virtual tables |
+    | `old.column_name` | `deleted.column_name` |
+    | `new.column_name` | `inserted.column_name` |
+    | `FOR EACH ROW` | (remove — SQL Server triggers are set-based) |
+    | `IF...THEN...END IF` | `IF...BEGIN...END` |
+    | `NOW()`, `TODAY()` | `GETDATE()` |
+    | `\|\|` (string concat) | `+` |
+
+    - **Note:** `BEFORE` triggers in SQL Anywhere can modify column values before the row is written.
+      SQL Server `INSTEAD OF` triggers work differently — they replace the entire DML operation.
+      Review each BEFORE trigger carefully before converting.
+21. Run `checkTriggerProgress.py` at any time to see DONE vs PENDING triggers
+    - BEFORE triggers are flagged in the PENDING list as a reminder
+22. Test each trigger in SQL Server before deploying to production
+23. Run `exportTriggers.py` → generates `create_triggers.sql`
+    - Connects to SQL Server (not SQL Anywhere)
+    - Exports all finished T-SQL triggers for go-live deployment
+24. Run `create_triggers.sql` in SSMS on the production server
+
+# PHASE 7 - STORED PROCEDURE MIGRATION
+
+25. Run `extractProcedures.py` → generates `sqla_procedures_source.sql`
+    - Reads all DBA-owned stored procedures from SQL Anywhere (178 total)
+    - Output is for reference only — will NOT run in SQL Server
+26. Convert procedures to T-SQL — key syntax differences:
 
     | SQL Anywhere | SQL Server T-SQL |
     |---|---|
@@ -103,5 +129,9 @@ Migrating a database from SAP (Sybase) SQL Anywhere 9.0 to Microsoft SQL Server 
     | `NOW()`, `TODAY()` | `GETDATE()` |
     | `\|\|` (string concat) | `+` |
 
-21. Test each procedure in SQL Server before deploying to production
-22. Deploy reviewed and tested procedures to SQL Server
+27. Run `checkProcedureProgress.py` at any time to see DONE vs PENDING procedures
+28. Test each procedure in SQL Server before deploying to production
+29. Run `exportProcedures.py` → generates `create_procedures.sql`
+    - Connects to SQL Server (not SQL Anywhere)
+    - Exports all finished T-SQL procedures for go-live deployment
+30. Run `create_procedures.sql` in SSMS on the production server
