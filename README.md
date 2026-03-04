@@ -43,6 +43,7 @@ Migrating a database from SAP (Sybase) SQL Anywhere 9.0 to Microsoft SQL Server 
     - Common causes:
       - `42S22 Invalid column name` — schema drift or wrong target database in connection string
       - `23000 PK violation` — duplicate or NULL primary key in source data
+      - `22007 datetime out of range` — date value before 1753-01-01 in source data
     - Investigate and resolve the root cause
     - Run `failedTableTransfer.py` — automatically reads `FAILED` rows from the most recent `migration_log_*.csv` and re-runs those tables only
     - Produces its own timestamped log for the re-run
@@ -65,3 +66,42 @@ Migrating a database from SAP (Sybase) SQL Anywhere 9.0 to Microsoft SQL Server 
     - Review any errors — FK failures typically mean a referenced row is missing in the parent table (data integrity issue in source data)
 14. Set SQL Server to FULL recovery mode
 15. Configure backup schedule
+
+# PHASE 5 - USER MIGRATION
+
+16. Run `migrateUsers.py` → generates `create_users.sql`
+    - Reads all non-system users from `SYS.SYSUSERPERM` in SQL Anywhere
+    - Generates `CREATE LOGIN`, `CREATE USER`, and role assignments for each user
+    - Default password for each user is set to their username (`CHECK_POLICY = OFF`)
+    - Role mapping:
+      - `dba_priv = Y` → `db_owner`
+      - All others → `db_datareader` + `db_datawriter`
+    - `IF NOT EXISTS` guards make the script safe to re-run
+    - `create_users.sql` is excluded from git (contains credentials)
+17. Run `create_users.sql` in SSMS
+18. Notify users to change their passwords on first login
+
+# PHASE 6 - STORED PROCEDURE MIGRATION
+
+19. Review DBA-owned stored procedures in SQL Anywhere (178 total)
+    ```sql
+    SELECT p.proc_name, p.proc_defn
+    FROM SYS.SYSPROCEDURE p
+    JOIN SYS.SYSUSERPERM u ON p.creator = u.user_id
+    WHERE u.user_name = 'DBA'
+    ORDER BY p.proc_name
+    ```
+20. Extract and translate procedures to T-SQL — key syntax differences:
+
+    | SQL Anywhere | SQL Server T-SQL |
+    |---|---|
+    | `IF...THEN...END IF` | `IF...BEGIN...END` |
+    | `LOOP...END LOOP` | `WHILE` |
+    | `LEAVE` | `BREAK` |
+    | `CALL proc()` | `EXEC proc` |
+    | `SIGNAL` | `THROW` / `RAISERROR` |
+    | `NOW()`, `TODAY()` | `GETDATE()` |
+    | `\|\|` (string concat) | `+` |
+
+21. Test each procedure in SQL Server before deploying to production
+22. Deploy reviewed and tested procedures to SQL Server

@@ -41,6 +41,7 @@
                   Common causes:
                     - Invalid column name (42S22): schema drift or wrong database
                     - PK violation (23000): duplicate or NULL primary key in source data
+                    - datetime out of range (22007): date value before 1753-01-01 in source
                3. Run failedTableTransfer.py - automatically reads FAILED rows
                   from the most recent migration_log_*.csv and re-runs those
                   tables only. Produces its own timestamped log for the re-run.
@@ -63,3 +64,39 @@
              is missing in the parent table (data integrity issue in source).
     Step 14: Set SQL Server to FULL recovery mode
     Step 15: Configure backup schedule
+
+  PHASE 5 - USER MIGRATION
+    Step 16: Run migrateUsers.py → generates create_users.sql
+             Reads all non-system users from SYS.SYSUSERPERM in SQL Anywhere.
+             Generates for each user:
+               - CREATE LOGIN with default password = username
+                 (CHECK_POLICY = OFF to allow username as password)
+               - CREATE USER mapped to the login
+               - Role assignment:
+                   dba_priv = Y → db_owner
+                   all others  → db_datareader + db_datawriter
+             IF NOT EXISTS guards make the script safe to re-run.
+             NOTE: create_users.sql is excluded from git (contains credentials).
+    Step 17: Run create_users.sql in SSMS
+    Step 18: Notify users to change their passwords on first login
+
+  PHASE 6 - STORED PROCEDURE MIGRATION
+    Step 19: Review DBA-owned stored procedures in SQL Anywhere (178 total)
+             Run in SQLA to list all:
+               SELECT p.proc_name, p.proc_defn
+               FROM SYS.SYSPROCEDURE p
+               JOIN SYS.SYSUSERPERM u ON p.creator = u.user_id
+               WHERE u.user_name = 'DBA'
+               ORDER BY p.proc_name
+    Step 20: Extract and translate procedures to T-SQL
+             SQL Anywhere and SQL Server T-SQL are different dialects.
+             Key syntax differences to watch for:
+               - IF...THEN...END IF      → IF...BEGIN...END
+               - LOOP...END LOOP         → WHILE
+               - LEAVE                   → BREAK
+               - CALL proc()             → EXEC proc
+               - SIGNAL                  → THROW / RAISERROR
+               - NOW(), TODAY()          → GETDATE()
+               - || (string concat)      → +
+    Step 21: Test each procedure in SQL Server before deploying to production
+    Step 22: Deploy reviewed and tested procedures to SQL Server
