@@ -2,16 +2,16 @@ import pyodbc
 import re
 
 src = pyodbc.connect(
-    # 'DRIVER={SQL Anywhere 17};'
-    # 'HOST=192.168.250.34;'
-    # 'SERVER=Emmitt;'
-    # 'DATABASE=Smith;'
-    # 'UID=dba;'
-    # 'PWD=sql34;'
     'DRIVER={SQL Anywhere 17};'
-    'DSN=Local9;'
+    'HOST=192.168.250.34;'
+    'SERVER=Emmitt;'
+    'DATABASE=Smith;'
     'UID=dba;'
-    'PWD=sql34'
+    'PWD=sql34;'
+    # 'DRIVER={SQL Anywhere 17};'
+    # 'DSN=Local9;'
+    # 'UID=dba;'
+    # 'PWD=sql34'
 )
 
 TRACKING_TABLE = 'proc_usage_log'
@@ -92,7 +92,13 @@ def inject_tracking(proc_name, proc_defn):
     ws_re   = re.compile(r'\s+')
     slc_re  = re.compile(r'(?:--|//)[^\n]*\n?')    # single-line comment (-- or //)
     bc_re   = re.compile(r'/\*.*?\*/', re.DOTALL)  # block comment
-    decl_re = re.compile(r'DECLARE\b[^;]*;', re.IGNORECASE | re.DOTALL)
+    # Match a DECLARE statement that may contain quoted strings with semicolons
+    # inside them (e.g. cursor FOR SELECT WHERE col = 'val; ue').
+    # Pattern: DECLARE + (non-special chars OR single-quoted strings) + unquoted ;
+    decl_re = re.compile(
+        r"DECLARE\b(?:[^;']|'(?:[^']|'')*')*;",
+        re.IGNORECASE | re.DOTALL
+    )
 
     while pos < len(proc_defn):
         m = (ws_re.match(proc_defn, pos) or
