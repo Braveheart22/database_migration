@@ -4,6 +4,7 @@ validation_log_*.csv
 
 # Generated SQL output files
 sqla_procedures_source.sql
+create_procedures.sql
 alter_tables.sql
 create_tables.sql
 fk_constraints.sql
