@@ -6,3 +6,4 @@ validation_log_*.csv
 alter_tables.sql
 create_tables.sql
 fk_constraints.sql
+create_users.sql
