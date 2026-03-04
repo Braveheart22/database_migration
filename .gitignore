@@ -3,6 +3,7 @@ migration_log_*.csv
 validation_log_*.csv
 
 # Generated SQL output files
+sqla_procedures_source.sql
 alter_tables.sql
 create_tables.sql
 fk_constraints.sql
