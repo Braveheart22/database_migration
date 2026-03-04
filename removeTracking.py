@@ -37,18 +37,19 @@ def get_tracked_procedures(conn):
 # Strip the tracking block from a procedure definition
 # ---------------------------------------------------------------------------
 def remove_tracking(proc_defn):
-    # Remove the entire -- [tracking] ... -- [/tracking] block including
-    # the newline that precedes it so no blank line is left behind
+    # Remove the entire -- [tracking] ... -- [/tracking] block.
+    # Use \r?\n to handle both LF and CRLF line endings — SQL Anywhere
+    # stores procedure definitions with CRLF which breaks a plain \n match.
     cleaned = re.sub(
-        r'\n[ \t]*-- \[tracking\].*?-- \[/tracking\]\n',
+        r'\r?\n[ \t]*-- \[tracking\].*?-- \[/tracking\]\r?\n',
         '\n',
         proc_defn,
         flags=re.DOTALL
     )
     # Rewrite as ALTER PROCEDURE regardless of whether proc_defn currently
-    # starts with CREATE PROCEDURE or ALTER PROCEDURE
+    # starts with CREATE or ALTER. Use \s* to handle any leading whitespace.
     cleaned = re.sub(
-        r'^(CREATE|ALTER)\s+PROCEDURE\b',
+        r'^\s*(CREATE|ALTER)\s+PROCEDURE\b',
         'ALTER PROCEDURE',
         cleaned,
         count=1,
