@@ -90,7 +90,7 @@ def inject_tracking(proc_name, proc_defn):
     # so we must insert AFTER the last DECLARE — not immediately after BEGIN.
     pos = begin_match.end()
     ws_re   = re.compile(r'\s+')
-    slc_re  = re.compile(r'--[^\n]*\n?')          # single-line comment
+    slc_re  = re.compile(r'(?:--|//)[^\n]*\n?')    # single-line comment (-- or //)
     bc_re   = re.compile(r'/\*.*?\*/', re.DOTALL)  # block comment
     decl_re = re.compile(r'DECLARE\b[^;]*;', re.IGNORECASE | re.DOTALL)
 
