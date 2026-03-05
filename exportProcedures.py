@@ -80,6 +80,10 @@ with open('create_procedures.sql', 'w', encoding='utf-8') as f:
             flags=re.IGNORECASE
         )
 
+        # Normalize line endings and collapse runs of 3+ newlines to 2
+        deploy_defn = deploy_defn.replace('\r\n', '\n').replace('\r', '\n')
+        deploy_defn = re.sub(r'\n{3,}', '\n\n', deploy_defn)
+
         f.write(deploy_defn)
         f.write("\nGO\n\n")
         print(f"  {proc_name}")
