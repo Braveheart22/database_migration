@@ -13,9 +13,15 @@ import re
 
 src = pyodbc.connect(
     'DRIVER={SQL Anywhere 17};'
-    'DSN=Local9;'
+    'HOST=192.168.250.34;'
+    'SERVER=Emmitt;'
+    'DATABASE=Smith;'
     'UID=dba;'
-    'PWD=sql34'
+    'PWD=sql34;'
+    # 'DRIVER={SQL Anywhere 17};'
+    # 'DSN=Local9;'
+    # 'UID=dba;'
+    # 'PWD=sql34'
 )
 
 # ---------------------------------------------------------------------------

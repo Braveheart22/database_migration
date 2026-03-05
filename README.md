@@ -2,6 +2,19 @@
 
 Migrating a database from SAP (Sybase) SQL Anywhere 9.0 to Microsoft SQL Server 2025
 
+# PREREQUISITES - SQL SERVER INSTANCE SETUP
+
+Before running any migration steps, ensure the SQL Server instance is configured correctly.
+These are one-time server-level settings.
+
+1. **Enable Mixed Mode Authentication** (required for SQL Server logins to work)
+   - In SSMS, right-click the server in Object Explorer → **Properties**
+   - Go to the **Security** page
+   - Set "Server authentication" to **SQL Server and Windows Authentication mode**
+   - Click OK
+   - **Restart the SQL Server service** — the change does not take effect until restarted
+     - Right-click the server in SSMS → Restart, or use SQL Server Configuration Manager
+
 # PHASE 1 - SCHEMA SETUP
 
 1. Drop and recreate the SQL Server database (clean slate)

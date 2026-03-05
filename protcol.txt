@@ -1,3 +1,16 @@
+  PREREQUISITES - SQL SERVER INSTANCE SETUP
+    One-time server-level configuration before any migration steps.
+
+    Step 0:  Enable Mixed Mode Authentication
+             Required for SQL Server logins to work (Phase 5 creates SQL Server logins).
+             1. In SSMS, right-click the server → Properties → Security page
+             2. Set "Server authentication" to:
+                  SQL Server and Windows Authentication mode
+             3. Click OK
+             4. Restart the SQL Server service (change not active until restarted)
+                  Right-click server in SSMS → Restart
+                  OR use SQL Server Configuration Manager
+
   PHASE 1 - SCHEMA SETUP
     Step 1:  Drop and recreate the SQL Server database (clean slate)
        1. USE master;

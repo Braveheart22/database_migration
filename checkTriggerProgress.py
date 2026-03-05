@@ -23,7 +23,7 @@ src = pyodbc.connect(
 
 dst = pyodbc.connect(
     'DRIVER={ODBC Driver 17 for SQL Server};'
-    'SERVER=LOOP-SQL2025;'
+    'SERVER=Loop-DB01;'
     'DATABASE=Loop-Loc_v1;'
     'Trusted_Connection=yes;'
 )
