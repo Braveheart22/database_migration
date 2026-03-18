@@ -1,12 +1,19 @@
 """
 checkProcedureProgress.py
 --------------------------
-Compares DBA-owned stored procedures in SQL Anywhere against what has been
-created in SQL Server so far.
+Compares DBA-owned stored procedures and functions in SQL Anywhere against
+what has been created in SQL Server so far.
+
+SQLA stores both procedures and functions in SYS.SYSPROCEDURE.
+MSSQL stores them separately:
+  type = 'P'  -- stored procedure
+  type = 'FN' -- scalar function
+  type = 'IF' -- inline table-valued function
+  type = 'TF' -- multi-statement table-valued function
 
 Output:
-  - DONE   : procedure exists in MSSQL
-  - PENDING: procedure exists in SQLA but not yet in MSSQL
+  - DONE   : procedure/function exists in MSSQL
+  - PENDING: procedure/function exists in SQLA but not yet in MSSQL
   - Summary counts
 """
 
@@ -47,7 +54,7 @@ def get_mssql_procedures(conn):
     cur.execute("""
         SELECT name
         FROM sys.objects
-        WHERE type = 'P'
+        WHERE type IN ('P', 'FN', 'IF', 'TF')
           AND is_ms_shipped = 0
         ORDER BY name
     """)
@@ -66,8 +73,8 @@ done    = sorted(sqla_procs & mssql_procs)
 pending = sorted(sqla_procs - mssql_procs)
 extra   = sorted(mssql_procs - sqla_procs)
 
-print(f"SQLA procedures  : {len(sqla_procs)}")
-print(f"MSSQL procedures : {len(mssql_procs)}")
+print(f"SQLA procedures/functions  : {len(sqla_procs)}")
+print(f"MSSQL procedures/functions : {len(mssql_procs)}")
 print()
 
 if done:
