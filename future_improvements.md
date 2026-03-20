@@ -89,6 +89,63 @@ The second occurrence should be removed.
 
 ## Incomplete Logic
 
+### dbf_dealer_bought_timeframe: day variables set using MONTH() instead of DAY()
+`ll_day_start` and `ll_day_end` are both assigned using `MONTH(@datestart)` and
+`MONTH(@dateend)` respectively, when they should use `DAY()`. This means the
+within-month boundary checks (`ll_day_start <= day(artran.date)` and
+`day(artran.date) <= ll_day_end`) use the month number as the day threshold instead
+of the actual start/end day. Fixed in the T-SQL conversion to use `DAY()`.
+
+### dbf_convert_to_metric: 'SQFT' unit never matches
+The function truncates the unit input to 2 characters (`LEFT(UPPER(@as_unit), 2)`)
+before the CASE check, so `'SQFT'` becomes `'SQ'` and can never match the `'SQFT'`
+branch. Input of `'SQFT'` always falls to the ELSE and returns an empty string.
+Either the truncation should be removed, or the `'SQFT'` branch should check `'SQ'`.
+
+### dbf_can_freight_be_calculated: UPS freight rates never calculated
+The UPS ship rate lookup (against the `ship_rates` table) was commented out in the
+original SQLA source. All orders that qualify for UPS freight (carrier 37, CV cover,
+USA, weight ≤ 150 lbs, valid ship zone, product group C) always return 0 instead of
+the actual freight amount. The `ship_rates` table and lookup logic need to be
+implemented before freight calculation is meaningful.
+
+### dbf_discount_old_material: FF shape discount always returns 0
+In `dbf_discount_old_material`, the `FF` shape branch computes a size-based discount
+(100 for small sizes, 250 for others) but then immediately overwrites it with an
+unconditional `SET @li_discount = 0`, so all FF shapes always return a discount of 0.
+The commented-out `--set li_discount=250` at the bottom of the original suggests this
+logic was mid-development and never completed.
+
+Intended behavior needs clarification: should FF shapes use the same size-based
+100/250 logic, always return 0, or follow different rules entirely?
+
+### dbf_Get_Weight: CheckData query uses hardcoded prep_id
+The data-availability check at the top of `dbf_Get_Weight` has a hardcoded
+`prep.prep_id = 619374` and `quote_no = 1` instead of the `@al_prep_id` /
+`@al_quote_no` parameters. This means the guard always tests the same hard-coded
+job regardless of what is passed in — if that job exists the function proceeds, if
+not it always returns -1 for every caller.
+
+Fix: replace both hardcoded values with the input parameters:
+```sql
+WHERE prep.prep_id      = @al_prep_id
+  AND prep_manf.quote_no = @al_quote_no
+  AND prep.[type]        = 'CV';
+```
+
+### dbf_get_verification_email: check 4 uses wrong flag variable
+In the fourth email-address block, the LN-type condition tests
+`@verification_drawing_3_flag` instead of `@verification_drawing_4_flag`:
+```sql
+-- original (wrong):
+OR (@verification_drawing_3_flag = 'LN' AND @ls_type = 'LN')
+-- should be:
+OR (@verification_drawing_4_flag = 'LN' AND @ls_type = 'LN')
+```
+This means a dealer whose fourth verification address is LN-only will never match
+when the prep type is LN (the condition silently falls through to the fallback
+`est_not_ack_form75` address instead).
+
 ### tr_set_job_difficulty trigger on user_productivity
 The original trigger looked up `material_id` for each job (via `prep`/`product`/`fabric` for
 jobs < 10000000, or via `stock_master`/`product`/`fabric` for jobs >= 10000000) and had
