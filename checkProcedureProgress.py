@@ -9,7 +9,7 @@ MSSQL stores them separately:
   type = 'P'  -- stored procedure
   type = 'FN' -- scalar function
   type = 'IF' -- inline table-valued function
-  type = 'TF' -- multi-statement table-valued function
+  type = 'TF' -- multi-statement table-valued function1
 
 Output:
   - DONE   : procedure/function exists in MSSQL
