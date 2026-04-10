@@ -1,0 +1,495 @@
+WITH OriginalQuote AS (
+    SELECT
+        pm.prep_id,
+        MIN(pm.quote_no) AS used_original_quote
+    FROM prep_manf pm
+    WHERE pm.status > 0
+    GROUP BY pm.prep_id
+),
+BaseJob AS (
+    SELECT
+        p.prep_id,
+        p.order_no,
+        p.prep_type,
+        p.type,
+        pm.quote_no,
+        pm.base_cost,
+        pm.treatment_cost,
+        pm.cover_hardware_cost,
+        pm.cover_net,
+        pm.other_list,
+        pm.other_net,
+        pm.markdown,
+        pm.liner_wall_thickness,
+        pm.liner_bottom_thickness,
+        pm.shape,
+        pm.dealer_discount,
+        pm.grid_size,
+        pm.sqft,
+        pm.sales_tax,
+        pm.product_id AS source_product_id,
+        oq.used_original_quote
+    FROM prep p
+    JOIN OriginalQuote oq
+      ON oq.prep_id = p.prep_id
+    JOIN prep_manf pm
+      ON pm.prep_id = p.prep_id
+     AND pm.quote_no = oq.used_original_quote
+    WHERE p.type = 'LN'
+      AND pm.product_group = 'C'
+      AND pm.base_cost > 0
+      AND pm.status > 0
+      AND p.prep_id = :al_prep_id
+),
+JobConstants AS (
+    SELECT
+        bj.*,
+        dba.f_Effective_Discount(bj.dealer_discount) AS dealer_discount_factor,
+        dba.dbf_is_myexclusive(bj.prep_id, bj.quote_no) AS is_myexclusive,
+        dba.f_get_discount_for_liners(
+            bj.prep_id,
+            bj.quote_no,
+            bj.liner_wall_thickness,
+            bj.liner_bottom_thickness
+        ) AS liner_upcharge,
+        CASE
+            WHEN bj.shape = 'FF' AND 3 = 4 THEN
+                (bj.base_cost / 1.15)
+                / (1 + dba.f_get_discount_for_liners(
+                        bj.prep_id,
+                        bj.quote_no,
+                        bj.liner_wall_thickness,
+                        bj.liner_bottom_thickness
+                    ))
+            ELSE
+                bj.base_cost
+                / (1 + dba.f_get_discount_for_liners(
+                        bj.prep_id,
+                        bj.quote_no,
+                        bj.liner_wall_thickness,
+                        bj.liner_bottom_thickness
+                    ))
+        END AS base_cost_raw,
+        dba.dbf_get_treatment_cost_of_job(bj.prep_id, bj.used_original_quote) AS source_treatment_net,
+        (
+            SELECT COUNT(*)
+            FROM prep_rules pr
+            WHERE pr.prep_id = bj.prep_id
+              AND pr.type = 'List'
+              AND pr.active = 'Y'
+        ) AS list_only,
+        (
+            SELECT wh.liner_extended_warranty
+            FROM warranty_header wh
+            WHERE (bj.prep_type = 'E' AND bj.prep_id = wh.prep_id)
+               OR (bj.prep_type = 'O' AND bj.order_no = wh.order_no)
+        ) AS lew,
+        (
+            SELECT wh.liner_extended_warranty_type
+            FROM warranty_header wh
+            WHERE (bj.prep_type = 'E' AND bj.prep_id = wh.prep_id)
+               OR (bj.prep_type = 'O' AND bj.order_no = wh.order_no)
+        ) AS lew_type,
+        (
+            SELECT MAX(COALESCE(wh.lew_amount, 0))
+            FROM warranty_header wh
+            WHERE (bj.prep_type = 'E' AND bj.prep_id = wh.prep_id)
+               OR (bj.prep_type = 'O' AND bj.order_no = wh.order_no)
+        ) AS lewamount,
+        (
+            SELECT COALESCE(SUM(tp.unit_price), 0)
+            FROM product_treatment pt
+            JOIN treatment_h th
+              ON th.treatment_code = pt.treatment_code
+            JOIN treatment_price tp
+              ON tp.treatment_code = th.treatment_code
+            JOIN prep_treatment pret
+              ON pret.treatment_code = th.treatment_code
+            WHERE pt.product_id = bj.source_product_id
+              AND pt.texture_treatment = 'N'
+              AND pret.treatment_code IN ('L120', 'L121', 'L120B', 'L134')
+              AND pret.prep_id = bj.prep_id
+              AND pret.quote_no = bj.used_original_quote
+              AND tp.effective_date = (
+                    SELECT MAX(tp2.effective_date)
+                    FROM treatment_price tp2
+                    WHERE tp2.treatment_code = tp.treatment_code
+              )
+        ) AS selected_treatment_price_sum,
+        (
+            SELECT COUNT(*)
+            FROM product_treatment pt
+            WHERE pt.product_id = bj.source_product_id
+              AND pt.texture_treatment = 'N'
+              AND pt.active = 'Y'
+              AND pt.treatment_code IN ('L120', 'L121', 'L120B', 'L134')
+        ) AS source_any_count,
+        (
+            SELECT COUNT(*)
+            FROM product_treatment pt
+            WHERE pt.product_id = bj.source_product_id
+              AND pt.texture_treatment = 'N'
+              AND pt.active = 'Y'
+              AND pt.treatment_code IN ('L120', 'L120B')
+        ) AS source_pearl_count,
+        (
+            SELECT COUNT(*)
+            FROM product_treatment pt
+            WHERE pt.product_id = bj.source_product_id
+              AND pt.texture_treatment = 'N'
+              AND pt.active = 'Y'
+              AND pt.treatment_code IN ('L134')
+        ) AS source_emboss_count,
+        (
+            SELECT COUNT(*)
+            FROM product_treatment pt
+            WHERE pt.product_id = bj.source_product_id
+              AND pt.texture_treatment = 'N'
+              AND pt.active = 'Y'
+              AND pt.treatment_code IN ('L121', 'L134')
+        ) AS source_pearl_embossed_count
+    FROM BaseJob bj
+),
+Variants AS (
+    SELECT '2020' AS wallbottom_quote, 20 AS target_wall, 20 AS target_bottom,
+           'Wall: 20 mil - Bottom: 20 mil' AS quote_type, '1' AS letter_quote,
+           1185 AS myexclusive_price_id, NULL AS fixed_product_id, 'BASE' AS variant_kind
+    UNION ALL SELECT '2028', 20, 28, 'Wall: 20 mil - Bottom: 28 mil', '5', 1186, NULL, 'BASE'
+    UNION ALL SELECT '2820', 28, 20, 'Wall: 28 mil - Bottom: 20 mil', '3', 1186, NULL, 'BASE'
+    UNION ALL SELECT '2828', 28, 28, 'Wall: 28 mil - Bottom: 28 mil', '4', 1186, NULL, 'BASE'
+    UNION ALL SELECT '2020_pearl', 20, 20, 'Wall: 20 mil - Bottom: 20 mil', '6', 1185, 1362, 'PEARL'
+    UNION ALL SELECT '2820_pearl', 28, 20, 'Wall: 28 mil - Bottom: 20 mil', '7', 1185, 1362, 'PEARL'
+    UNION ALL SELECT '2828_pearl', 28, 28, 'Wall: 28 mil - Bottom: 28 mil', '8', 1185, 1362, 'PEARL'
+    UNION ALL SELECT '2028_pearl', 20, 28, 'Wall: 20 mil - Bottom: 28 mil', '9', 1185, 1362, 'PEARL'
+    UNION ALL SELECT '2020_emboss', 20, 20, 'Wall: 20 mil - Bottom: 20 mil', '10', 1185, 1544, 'EMBOSS'
+    UNION ALL SELECT '2820_emboss', 28, 20, 'Wall: 28 mil - Bottom: 20 mil', '11', 1185, 1544, 'EMBOSS'
+    UNION ALL SELECT '2828_emboss', 28, 28, 'Wall: 28 mil - Bottom: 28 mil', '12', 1185, 1544, 'EMBOSS'
+    UNION ALL SELECT '2028_emboss', 20, 28, 'Wall: 20 mil - Bottom: 28 mil', '13', 1185, 1544, 'EMBOSS'
+    UNION ALL SELECT '2020_pearl_embossed', 20, 20, 'Wall: 20 mil - Bottom: 20 mil', '14', 1185, 1543, 'PEARL_EMBOSSED'
+    UNION ALL SELECT '2820_pearl_embossed', 28, 20, 'Wall: 28 mil - Bottom: 20 mil', '15', 1185, 1543, 'PEARL_EMBOSSED'
+    UNION ALL SELECT '2828_pearl_embossed', 28, 28, 'Wall: 28 mil - Bottom: 28 mil', '16', 1185, 1543, 'PEARL_EMBOSSED'
+    UNION ALL SELECT '2028_pearl_embossed', 20, 28, 'Wall: 20 mil - Bottom: 28 mil', '17', 1185, 1543, 'PEARL_EMBOSSED'
+),
+Expanded AS (
+    SELECT
+        jc.prep_id,
+        jc.order_no,
+        jc.prep_type,
+        jc.quote_no,
+        jc.base_cost,
+        jc.treatment_cost,
+        jc.cover_hardware_cost,
+        jc.cover_net,
+        jc.other_list,
+        jc.other_net,
+        jc.markdown,
+        jc.liner_wall_thickness,
+        jc.liner_bottom_thickness,
+        jc.shape,
+        jc.dealer_discount,
+        jc.dealer_discount_factor,
+        jc.grid_size,
+        jc.sqft,
+        jc.sales_tax,
+        jc.source_product_id,
+        jc.used_original_quote,
+        jc.is_myexclusive,
+        jc.liner_upcharge,
+        jc.base_cost_raw,
+        jc.source_treatment_net,
+        jc.list_only,
+        jc.lew,
+        jc.lew_type,
+        jc.lewamount,
+        jc.selected_treatment_price_sum,
+        jc.source_any_count,
+        jc.source_pearl_count,
+        jc.source_emboss_count,
+        jc.source_pearl_embossed_count,
+        v.wallbottom_quote,
+        v.target_wall,
+        v.target_bottom,
+        v.quote_type,
+        v.letter_quote,
+        v.myexclusive_price_id,
+        v.fixed_product_id,
+        v.variant_kind,
+        COALESCE(v.fixed_product_id, jc.source_product_id) AS target_product_id,
+        dba.f_get_discount_for_liners(jc.prep_id, jc.quote_no, v.target_wall, v.target_bottom) AS liner_upcharge_new
+    FROM JobConstants jc
+    CROSS JOIN Variants v
+),
+ExpandedWithProduct AS (
+    SELECT
+        e.*,
+        p.product_id,
+        p.description,
+        p.wall_thickness_allowed,
+        p.bottom_thickness_allowed,
+        (
+            SELECT COUNT(*)
+            FROM product_treatment pt
+            WHERE pt.product_id = p.product_id
+              AND pt.texture_treatment = 'N'
+              AND pt.active = 'Y'
+              AND pt.treatment_code IN ('L120', 'L121', 'L120B', 'L134')
+        ) AS target_any_count,
+        (
+            SELECT COUNT(*)
+            FROM product_treatment pt
+            WHERE pt.product_id = p.product_id
+              AND pt.texture_treatment = 'N'
+              AND pt.active = 'Y'
+              AND pt.treatment_code IN ('L120', 'L120B')
+        ) AS target_pearl_count,
+        (
+            SELECT COUNT(*)
+            FROM product_treatment pt
+            WHERE pt.product_id = p.product_id
+              AND pt.texture_treatment = 'N'
+              AND pt.active = 'Y'
+              AND pt.treatment_code IN ('L134')
+        ) AS target_emboss_count,
+        (
+            SELECT COUNT(*)
+            FROM product_treatment pt
+            WHERE pt.product_id = p.product_id
+              AND pt.texture_treatment = 'N'
+              AND pt.active = 'Y'
+              AND pt.treatment_code IN ('L121', 'L134')
+        ) AS target_pearl_embossed_count,
+        (
+            SELECT COALESCE(SUM(tp.unit_price), 0)
+            FROM product_treatment pt
+            JOIN treatment_h th
+              ON th.treatment_code = pt.treatment_code
+            JOIN treatment_price tp
+              ON tp.treatment_code = th.treatment_code
+            WHERE pt.product_id = p.product_id
+              AND pt.texture_treatment = 'N'
+              AND tp.effective_date = (
+                    SELECT MAX(tp2.effective_date)
+                    FROM treatment_price tp2
+                    WHERE tp2.treatment_code = tp.treatment_code
+              )
+        ) AS target_treatment_price_sum
+    FROM Expanded e
+    JOIN product p
+      ON p.product_id = e.target_product_id
+),
+Finalized AS (
+    SELECT
+        ewp.*,
+        CASE
+            WHEN ewp.is_myexclusive = 'Y' THEN
+                dba.f_get_price(ewp.myexclusive_price_id, ewp.grid_size, ewp.sqft, ewp.shape) * ewp.sqft
+            ELSE
+                0
+        END AS myexclusive_price,
+        CASE
+            WHEN ewp.shape = 'FF' AND 3 = 4 THEN
+                ((ewp.base_cost_raw * (1 + ewp.liner_upcharge_new)) * 1.15) - ewp.selected_treatment_price_sum
+            ELSE
+                (ewp.base_cost_raw * (1 + ewp.liner_upcharge_new)) - ewp.selected_treatment_price_sum
+        END AS base_cost_new,
+        CASE
+            WHEN ewp.variant_kind = 'BASE' THEN ewp.treatment_cost
+            ELSE ewp.target_treatment_price_sum
+        END AS effective_treatment_cost,
+        CASE
+            WHEN ewp.variant_kind = 'BASE' THEN ewp.source_any_count
+            WHEN ewp.variant_kind = 'PEARL' THEN ewp.source_pearl_count
+            WHEN ewp.variant_kind = 'EMBOSS' THEN ewp.source_emboss_count
+            ELSE ewp.source_pearl_embossed_count
+        END AS is_pearlessence_embossed,
+        CASE
+            WHEN ewp.variant_kind = 'BASE' THEN
+                CASE
+                    WHEN CAST((ewp.liner_wall_thickness + ewp.liner_bottom_thickness) AS VARCHAR(20)) = ewp.wallbottom_quote THEN
+                        CASE WHEN ewp.source_any_count > 0 THEN 0 ELSE 1 END
+                    ELSE 1
+                END
+            WHEN ewp.variant_kind = 'PEARL' THEN
+                CASE
+                    WHEN CONCAT(CAST((ewp.liner_wall_thickness + ewp.liner_bottom_thickness) AS VARCHAR(20)), '_pearl') = ewp.wallbottom_quote THEN
+                        CASE WHEN ewp.source_pearl_count = 0 THEN 1 ELSE 0 END
+                    ELSE 1
+                END
+            WHEN ewp.variant_kind = 'EMBOSS' THEN
+                CASE
+                    WHEN CONCAT(CAST((ewp.liner_wall_thickness + ewp.liner_bottom_thickness) AS VARCHAR(20)), '_emboss') = ewp.wallbottom_quote THEN
+                        CASE WHEN ewp.source_emboss_count = 0 THEN 1 ELSE 0 END
+                    ELSE 1
+                END
+            ELSE
+                CASE
+                    WHEN CONCAT(CAST((ewp.liner_wall_thickness + ewp.liner_bottom_thickness) AS VARCHAR(20)), '_pearl_embossed') = ewp.wallbottom_quote THEN
+                        CASE WHEN ewp.source_pearl_embossed_count = 0 THEN 1 ELSE 0 END
+                    ELSE 1
+                END
+        END AS showme,
+        CASE
+            WHEN ewp.variant_kind = 'BASE' AND ewp.source_any_count > 0 THEN
+                (SELECT p2.description FROM product p2 WHERE p2.product_id = 148)
+            ELSE
+                ''
+        END AS new_product_description,
+        CASE
+            WHEN ewp.variant_kind = 'BASE' THEN
+                (
+                    SELECT COUNT(*)
+                    FROM prep_manf pm
+                    WHERE pm.prep_id = ewp.prep_id
+                      AND pm.liner_wall_thickness = ewp.target_wall
+                      AND pm.liner_bottom_thickness = ewp.target_bottom
+                      AND pm.product_id = ewp.source_product_id
+                      AND pm.quote_no <> ewp.used_original_quote
+                      AND ewp.source_any_count = 0
+                )
+            WHEN ewp.variant_kind = 'PEARL' THEN
+                (
+                    SELECT COUNT(*)
+                    FROM prep_treatment pt
+                    JOIN prep_manf pm
+                      ON pm.prep_id = pt.prep_id
+                     AND pm.quote_no = pt.quote_no
+                    WHERE pt.prep_id = ewp.prep_id
+                      AND pt.treatment_code IN ('L120', 'L120B')
+                      AND pt.quote_no <> ewp.used_original_quote
+                      AND pm.liner_wall_thickness = ewp.target_wall
+                      AND pm.liner_bottom_thickness = ewp.target_bottom
+                )
+            WHEN ewp.variant_kind = 'EMBOSS' THEN
+                (
+                    SELECT COUNT(*)
+                    FROM prep_treatment pt
+                    JOIN prep_manf pm
+                      ON pm.prep_id = pt.prep_id
+                     AND pm.quote_no = pt.quote_no
+                    WHERE pt.prep_id = ewp.prep_id
+                      AND pt.treatment_code IN ('L134')
+                      AND pt.quote_no <> ewp.used_original_quote
+                      AND pm.liner_wall_thickness = ewp.target_wall
+                      AND pm.liner_bottom_thickness = ewp.target_bottom
+                )
+            ELSE
+                (
+                    SELECT COUNT(*)
+                    FROM prep_treatment pt
+                    JOIN prep_manf pm
+                      ON pm.prep_id = pt.prep_id
+                     AND pm.quote_no = pt.quote_no
+                    WHERE pt.prep_id = ewp.prep_id
+                      AND pt.treatment_code IN ('L121')
+                      AND pt.quote_no <> ewp.used_original_quote
+                      AND pm.liner_wall_thickness = ewp.target_wall
+                      AND pm.liner_bottom_thickness = ewp.target_bottom
+                )
+        END AS present,
+        CASE
+            WHEN ewp.variant_kind = 'BASE' THEN
+                CASE
+                    WHEN (ewp.wall_thickness_allowed IN ('A', CAST(ewp.target_wall AS VARCHAR(2)))
+                      AND ewp.bottom_thickness_allowed IN ('A', CAST(ewp.target_bottom AS VARCHAR(2))))
+                      OR ewp.source_any_count > 0
+                    THEN 1 ELSE 0
+                END
+            WHEN ewp.variant_kind = 'PEARL' THEN
+                CASE
+                    WHEN ewp.is_myexclusive = 'N'
+                     AND (
+                            ewp.source_pearl_count = 0 OR
+                            EXISTS (
+                                SELECT 1
+                                FROM product p3
+                                WHERE p3.product_id = ewp.source_product_id
+                                  AND (p3.wall_thickness_allowed = 'A' OR p3.wall_thickness_allowed = CAST(ewp.target_wall AS VARCHAR(2)))
+                                  AND (p3.bottom_thickness_allowed = 'A' OR p3.bottom_thickness_allowed = CAST(ewp.target_bottom AS VARCHAR(2)))
+                            )
+                         )
+                    THEN 1 ELSE 0
+                END
+            WHEN ewp.variant_kind = 'EMBOSS' THEN
+                CASE
+                    WHEN ewp.is_myexclusive = 'N'
+                     AND (
+                            ewp.source_emboss_count = 0 OR
+                            EXISTS (
+                                SELECT 1
+                                FROM product p3
+                                WHERE p3.product_id = ewp.source_product_id
+                                  AND (p3.wall_thickness_allowed = 'A' OR p3.wall_thickness_allowed = CAST(ewp.target_wall AS VARCHAR(2)))
+                                  AND (p3.bottom_thickness_allowed = 'A' OR p3.bottom_thickness_allowed = CAST(ewp.target_bottom AS VARCHAR(2)))
+                            )
+                         )
+                    THEN 1 ELSE 0
+                END
+            ELSE
+                CASE
+                    WHEN ewp.is_myexclusive = 'N'
+                     AND (
+                            ewp.source_pearl_embossed_count = 0 OR
+                            EXISTS (
+                                SELECT 1
+                                FROM product p3
+                                WHERE p3.product_id = ewp.source_product_id
+                                  AND (p3.wall_thickness_allowed = 'A' OR p3.wall_thickness_allowed = CAST(ewp.target_wall AS VARCHAR(2)))
+                                  AND (p3.bottom_thickness_allowed = 'A' OR p3.bottom_thickness_allowed = CAST(ewp.target_bottom AS VARCHAR(2)))
+                            )
+                         )
+                    THEN 1 ELSE 0
+                END
+        END AS is_allowed
+    FROM ExpandedWithProduct ewp
+)
+SELECT
+    f.prep_id,
+    f.base_cost,
+    f.treatment_cost,
+    f.cover_hardware_cost,
+    f.cover_net,
+    f.other_list,
+    f.other_net,
+    f.markdown,
+    f.liner_wall_thickness,
+    f.liner_bottom_thickness,
+    f.shape,
+    f.dealer_discount,
+    f.dealer_discount_factor,
+    f.is_myexclusive,
+    f.myexclusive_price,
+    f.liner_upcharge,
+    f.base_cost_raw,
+    f.liner_upcharge_new,
+    f.base_cost_new,
+    ((CASE WHEN f.is_myexclusive = 'Y' THEN f.myexclusive_price ELSE f.base_cost_new END) + f.effective_treatment_cost + f.cover_hardware_cost) AS total_new,
+    (
+        ((CASE WHEN f.is_myexclusive = 'Y' THEN f.myexclusive_price ELSE f.base_cost_new END) * f.dealer_discount_factor)
+        + f.source_treatment_net
+        + (CASE WHEN f.variant_kind = 'BASE' THEN 0 ELSE f.effective_treatment_cost * f.dealer_discount_factor END)
+        + (f.cover_hardware_cost * f.dealer_discount_factor)
+    ) AS net_new,
+    f.showme,
+    (f.liner_wall_thickness + f.liner_bottom_thickness) AS wallbottom,
+    f.wallbottom_quote,
+    f.sqft,
+    f.sales_tax,
+    f.description,
+    f.new_product_description,
+    f.list_only,
+    f.quote_type,
+    f.letter_quote,
+    f.present,
+    f.wall_thickness_allowed,
+    f.bottom_thickness_allowed,
+    f.used_original_quote,
+    f.product_id,
+    f.is_pearlessence_embossed,
+    f.lew,
+    f.lew_type,
+    f.lewamount
+FROM Finalized f
+WHERE f.showme = 1
+  AND f.present = 0
+  AND f.is_allowed = 1
+ORDER BY CAST(f.letter_quote AS INTEGER);

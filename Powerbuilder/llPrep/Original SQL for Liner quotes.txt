@@ -1,0 +1,3856 @@
+  SELECT "prep"."prep_id",   
+         "prep_manf"."base_cost",   
+         "prep_manf"."treatment_cost",   
+         "prep_manf"."cover_hardware_cost",  
+			prep_manf.cover_net, 
+         "prep_manf"."other_list",   
+         "prep_manf"."other_net",   
+         "prep_manf"."markdown",   
+         "prep_manf"."liner_wall_thickness",   
+         "prep_manf"."liner_bottom_thickness",   
+         "prep_manf"."shape" ,
+			"prep_manf"."dealer_discount",
+			f_Effective_Discount("prep_manf"."dealer_discount") as dealer_discount_factor,
+
+			dbf_is_myexclusive(prep_manf.prep_id, prep_manf.quote_no) as is_myexclusive,
+
+			(if is_myexclusive = 'Y' then
+				f_get_price(1185,prep_manf.grid_size,prep_manf.sqft,prep_manf.shape) * prep_manf.sqft 
+			else
+				0
+			endif) as myexclusive_price,
+
+
+			f_get_discount_for_liners(prep_manf.prep_id, prep_manf.quote_no, "prep_manf"."liner_wall_thickness","prep_manf"."liner_bottom_thickness") as liner_upcharge,
+
+			(if prep_manf.shape = 'FF' and 3 = 4 then
+				(    ("prep_manf"."base_cost" / 1.15 ) / (1 + liner_upcharge      )   )
+			 else
+				(    ("prep_manf"."base_cost") / (1 + liner_upcharge      )   )
+			 endif) as base_cost_raw ,
+			 f_get_discount_for_liners(prep_manf.prep_id, prep_manf.quote_no, 20,20)  liner_upcharge_new ,
+			
+			 (
+			 	(
+					if prep_manf.shape = 'FF' and 3 = 4  then
+						(base_cost_raw * (1 + liner_upcharge_new) )  * 1.15
+			 		else
+						(base_cost_raw * (1 + liner_upcharge_new) )
+			 		endif
+				) -
+				(
+					
+					coalesce(
+									(
+										select coalesce(sum("treatment_price"."unit_price"),0)
+										from "product_treatment", "treatment_h", "treatment_price", "prep_treatment"
+										where 	"product_treatment"."treatment_code" = "treatment_h"."treatment_code" and
+													"treatment_h"."treatment_Code" = "treatment_price"."treatment_code" and
+													"treatment_price"."effective_date" in
+													(
+				
+														select max("tp"."effective_date")
+														from "treatment_price" as "tp"
+														where "tp"."treatment_Code" = "treatment_price"."treatment_code"
+													) and
+													"product_treatment"."product_id" = prep_manf.product_id and
+													product_treatment.texture_treatment = 'N'  and
+													"prep_treatment"."treatment_Code" = "treatment_h"."treatment_code" and
+													"prep_treatment"."treatment_Code" in ('L120', 'L121','L120B','L134') and
+													"prep_treatment"."prep_id" = "prep"."prep_id" and
+													"prep_treatment"."quote_no" = used_quote
+									),
+									0
+						
+
+							  )
+
+				
+
+				) 
+
+
+			 )as base_cost_new ,
+
+			 ((if is_myexclusive = 'Y' then myexclusive_price else  base_cost_new  endif) + "prep_manf"."treatment_cost" +  "prep_manf"."cover_hardware_cost" ) as total_new ,
+		
+		    (
+				((if is_myexclusive = 'Y' then myexclusive_price else  base_cost_new  endif)  * dealer_discount_factor ) + 
+				dbf_get_treatment_cost_of_job("prep"."prep_id", used_quote ) +				
+			   ("prep_manf"."cover_hardware_cost" * dealer_discount_factor) 
+
+			 ) as net_new ,
+			
+			
+
+			(
+				if wallbottom = wallbottom_quote     then
+					if is_pearlessence_embossed > 0 then
+						1
+					else
+						0
+					endif
+				else
+						1
+				endif
+		   ) as showme ,
+			("prep_manf"."liner_wall_thickness" || "prep_manf"."liner_bottom_thickness") as wallbottom ,
+			'2020' as wallbottom_quote,
+			 prep_manf.sqft ,
+			prep_manf.sales_tax ,
+			product.description ,
+			(
+				if is_pearlessence_embossed > 0 then
+					(
+						select p.description
+						from product as p
+						where p.product_id = 148
+					)
+				else
+					''
+				endif
+
+
+			) as new_product_description ,
+
+			(	Select count (*) 
+				from "prep_rules" 
+				where ( "prep_rules"."prep_id" = prep.prep_id ) and 
+						( "prep_rules"."type" = 'List' ) and 
+						( "prep_rules"."active" = 'Y' )) as list_only ,
+			'Wall: 20 mil - Bottom: 20 mil' as quote_type ,
+			'1' as letter_quote ,
+			(
+				select count(*)
+				from prep_manf as pm
+				where pm.prep_id = prep_manf.prep_id and
+						(
+							pm.liner_wall_thickness  = 20 and liner_bottom_thickness = 20 and
+							pm.product_id = prep_manf.product_id and
+							pm.quote_no <> used_quote
+						) 	
+							and
+						(
+							is_pearlessence_embossed = 0
+						)
+			) as present ,
+			product.wall_thickness_allowed, 
+			product.bottom_thickness_allowed ,
+			(
+				select min(pm.quote_no)
+				from prep_manf as pm
+				where pm.prep_id = prep.prep_id and
+						pm.status > 0
+			) as used_quote,
+			product.product_id ,
+
+			(
+				select count(*)
+				from product_treatment, product as p
+				where product_treatment.product_id = p.product_id and
+						product_treatment.treatment_code  in ('L120', 'L121','L120B','L134') and
+						product_treatment.texture_treatment = 'N' and
+						product_treatment.active = 'Y' and
+						product_treatment.product_id =  product.product_id
+			) as is_pearlessence_embossed ,
+
+			(
+				select warranty_Header.liner_extended_warranty
+				from warranty_header
+				where
+						(
+							(prep.prep_type = 'E' and prep.prep_id = warranty_header.prep_id) or
+							(prep.prep_type = 'O' and prep.order_no = warranty_header.order_no) 
+						)
+			) as lew,
+
+			(
+				select warranty_Header.liner_extended_warranty_type
+				from warranty_header
+				where
+						(
+							(prep.prep_type = 'E' and prep.prep_id = warranty_header.prep_id) or
+							(prep.prep_type = 'O' and prep.order_no = warranty_header.order_no) 
+						)
+			) as lew_type ,
+
+			(
+				select max(coalesce(warranty_header.lew_amount,0))
+				from warranty_Header
+				where (
+							(prep.prep_type = 'E' and prep.prep_id = warranty_header.prep_id) or
+							(prep.prep_type = 'O' and prep.order_no = warranty_header.order_no) 
+						)
+
+			) as lewamount 
+				
+    FROM "prep",   
+         "prep_manf" ,
+			"product" 
+   WHERE ( "prep"."prep_id" = "prep_manf"."prep_id" ) AND  
+         ( "prep_manf"."quote_no" = used_quote ) AND  
+         ( "prep"."type" = 'LN' ) AND  
+         ( "prep_manf"."product_group" = 'C' )    and
+			prep.prep_id = :al_prep_id and
+			prep_manf.base_cost > 0 and
+			prep_manf.status > 0 and
+			prep_manf.product_id = product.product_id and
+			showme = 1 and
+			present = 0 and
+			(
+				(
+					product.wall_thickness_allowed in ('A','20') and
+					product.bottom_thickness_allowed in ('A','20')
+				)
+					or
+				(
+					is_pearlessence_embossed > 0
+				)
+			)
+
+union
+
+	  SELECT "prep"."prep_id",   
+         "prep_manf"."base_cost",   
+         "prep_manf"."treatment_cost",   
+         "prep_manf"."cover_hardware_cost",  
+			prep_manf.cover_net, 
+         "prep_manf"."other_list",   
+         "prep_manf"."other_net",   
+         "prep_manf"."markdown",   
+         "prep_manf"."liner_wall_thickness",   
+         "prep_manf"."liner_bottom_thickness",   
+         "prep_manf"."shape" ,
+			"prep_manf"."dealer_discount",
+			f_Effective_Discount("prep_manf"."dealer_discount") as dealer_discount_factor,
+
+			dbf_is_myexclusive(prep_manf.prep_id, prep_manf.quote_no) as is_myexclusive,
+
+			(if is_myexclusive = 'Y' then
+				f_get_price(1186,prep_manf.grid_size,prep_manf.sqft,prep_manf.shape) * prep_manf.sqft  
+			else
+				0
+			endif) as myexclusive_price,
+
+
+			f_get_discount_for_liners(prep_manf.prep_id, prep_manf.quote_no,  "prep_manf"."liner_wall_thickness","prep_manf"."liner_bottom_thickness") as liner_upcharge,
+
+			(if prep_manf.shape = 'FF' and 3 = 4 then
+				(    ("prep_manf"."base_cost" / 1.15 ) / (1 + liner_upcharge      )   )
+			 else
+				(    ("prep_manf"."base_cost") / (1 + liner_upcharge      )   )
+			 endif) as base_cost_raw ,
+			 f_get_discount_for_liners(prep_manf.prep_id, prep_manf.quote_no, 20,28)  liner_upcharge_new ,
+			
+			 (
+			 	(
+					if prep_manf.shape = 'FF' and 3 = 4 then
+						(base_cost_raw * (1 + liner_upcharge_new) )  * 1.15
+			 		else
+						(base_cost_raw * (1 + liner_upcharge_new) )
+			 		endif
+				) -
+				(
+					
+					coalesce(
+									(
+										select coalesce(sum("treatment_price"."unit_price"),0)
+										from "product_treatment", "treatment_h", "treatment_price", "prep_treatment"
+										where 	"product_treatment"."treatment_code" = "treatment_h"."treatment_code" and
+													"treatment_h"."treatment_Code" = "treatment_price"."treatment_code" and
+													"treatment_price"."effective_date" in
+													(
+				
+														select max("tp"."effective_date")
+														from "treatment_price" as "tp"
+														where "tp"."treatment_Code" = "treatment_price"."treatment_code"
+													) and
+													"product_treatment"."product_id" = prep_manf.product_id and
+													product_treatment.texture_treatment = 'N'  and
+													"prep_treatment"."treatment_Code" = "treatment_h"."treatment_code" and
+													"prep_treatment"."treatment_Code" in ('L120', 'L121','L120B','L134') and
+													"prep_treatment"."prep_id" = "prep"."prep_id" and
+													"prep_treatment"."quote_no" = used_quote
+									),
+									0
+						
+
+							  )
+
+				
+
+				) 
+ 
+
+			 )as base_cost_new ,
+
+			 ((if is_myexclusive = 'Y' then myexclusive_price else  base_cost_new  endif) + "prep_manf"."treatment_cost" +  "prep_manf"."cover_hardware_cost" ) as total_new ,
+		
+		    (
+				((if is_myexclusive = 'Y' then myexclusive_price else  base_cost_new  endif)  * dealer_discount_factor ) + 
+				dbf_get_treatment_cost_of_job("prep"."prep_id", used_quote ) +				
+			   ("prep_manf"."cover_hardware_cost" * dealer_discount_factor) 
+
+			 ) as net_new ,
+		
+
+			(if wallbottom = wallbottom_quote     then
+					if is_pearlessence_embossed > 0 then
+						1
+					else
+						0
+					endif
+				else
+						1
+				endif ) as showme,
+				("prep_manf"."liner_wall_thickness" || "prep_manf"."liner_bottom_thickness") as wallbottom ,
+			'2028' as wallbottom_quote,
+			
+			prep_manf.sqft ,
+			prep_manf.sales_tax , 
+			product.description ,
+			(
+				if is_pearlessence_embossed > 0 then
+					(
+						select p.description
+						from product as p
+						where p.product_id = 148
+					)
+				else
+					''
+				endif
+
+
+			) as new_product_description ,
+			(	Select count (*) 
+				from "prep_rules" 
+				where ( "prep_rules"."prep_id" = prep.prep_id ) and 
+						( "prep_rules"."type" = 'List' ) and 
+						( "prep_rules"."active" = 'Y' )) as list_only ,
+			'Wall: 20 mil - Bottom: 28 mil' as quote_type ,
+			'5' as letter_quote ,
+			(
+				select count(*)
+				from prep_manf as pm
+				where pm.prep_id = prep_manf.prep_id and
+						(
+							pm.liner_wall_thickness  = 20 and liner_bottom_thickness = 28 and
+							pm.product_id = prep_manf.product_id and
+							pm.quote_no <> used_quote
+						) 	
+							and
+						(
+							is_pearlessence_embossed = 0
+						)
+
+			) as present ,
+			product.wall_thickness_allowed, 
+			product.bottom_thickness_allowed ,
+			(
+				select min(pm.quote_no)
+				from prep_manf as pm
+				where pm.prep_id = prep.prep_id and
+						pm.status > 0
+			) as used_quote,
+			product.product_id ,
+
+			(
+				select count(*)
+				from product_treatment, product as p
+				where product_treatment.product_id = p.product_id and
+						product_treatment.treatment_code  in ('L120', 'L121','L120B','L134') and
+						product_treatment.texture_treatment = 'N' and
+						product_treatment.active = 'Y' and
+						product_treatment.product_id =  product.product_id
+			) as is_pearlessence_embossed ,
+
+			(
+				select warranty_Header.liner_extended_warranty
+				from warranty_header
+				where
+						(
+							(prep.prep_type = 'E' and prep.prep_id = warranty_header.prep_id) or
+							(prep.prep_type = 'O' and prep.order_no = warranty_header.order_no) 
+						)
+			) as lew,
+
+			(
+				select warranty_Header.liner_extended_warranty_type
+				from warranty_header
+				where
+						(
+							(prep.prep_type = 'E' and prep.prep_id = warranty_header.prep_id) or
+							(prep.prep_type = 'O' and prep.order_no = warranty_header.order_no) 
+						)
+			) as lew_type ,
+
+			(
+				select max(coalesce(warranty_header.lew_amount,0))
+				from warranty_Header
+				where (
+							(prep.prep_type = 'E' and prep.prep_id = warranty_header.prep_id) or
+							(prep.prep_type = 'O' and prep.order_no = warranty_header.order_no) 
+						)
+
+			) as lewamount 
+				
+    FROM "prep",   
+         "prep_manf"  ,
+			"product" 
+   WHERE ( "prep"."prep_id" = "prep_manf"."prep_id" ) AND  
+         ( "prep_manf"."quote_no" = used_quote ) AND  
+         ( "prep"."type" = 'LN' ) AND  
+         ( "prep_manf"."product_group" = 'C' )    and
+			prep.prep_id = :al_prep_id and
+			prep_manf.base_cost > 0 and
+			prep_manf.status > 0 and
+			prep_manf.product_id = product.product_id and
+			showme = 1 and
+			present = 0 and
+			(
+				(
+					product.wall_thickness_allowed in ('A','20') and
+					product.bottom_thickness_allowed in ('A','28') 
+				) or
+				(
+					is_pearlessence_embossed > 0
+				)
+			) 
+				
+union
+
+  SELECT "prep"."prep_id",   
+         "prep_manf"."base_cost",   
+         "prep_manf"."treatment_cost",   
+         "prep_manf"."cover_hardware_cost",  
+			prep_manf.cover_net, 
+         "prep_manf"."other_list",   
+         "prep_manf"."other_net",   
+         "prep_manf"."markdown",   
+         "prep_manf"."liner_wall_thickness",   
+         "prep_manf"."liner_bottom_thickness",   
+         "prep_manf"."shape" ,
+			"prep_manf"."dealer_discount",
+			f_Effective_Discount("prep_manf"."dealer_discount") as dealer_discount_factor,
+
+			dbf_is_myexclusive(prep_manf.prep_id, prep_manf.quote_no) as is_myexclusive,
+
+			(if is_myexclusive = 'Y' then
+				f_get_price(1186,prep_manf.grid_size,prep_manf.sqft,prep_manf.shape) * prep_manf.sqft
+			else
+				0
+			endif) as myexclusive_price,
+
+
+
+			f_get_discount_for_liners(prep_manf.prep_id, prep_manf.quote_no,  "prep_manf"."liner_wall_thickness", "prep_manf"."liner_bottom_thickness") as liner_upcharge,
+
+			(if prep_manf.shape = 'FF' and 3 = 4 then
+				(    ("prep_manf"."base_cost" / 1.15 ) / (1 + liner_upcharge      )   )
+			 else
+				(    ("prep_manf"."base_cost") / (1 + liner_upcharge      )   )
+
+			 endif) as base_cost_raw ,
+			
+			 f_get_discount_for_liners( prep_manf.prep_id, prep_manf.quote_no, 28,20) as liner_upcharge_new ,
+
+			 (
+			 	(
+					if prep_manf.shape = 'FF' and 3 = 4 then
+						(base_cost_raw * (1 + liner_upcharge_new) )  * 1.15
+			 		else
+						(base_cost_raw * (1 + liner_upcharge_new) )
+			 		endif
+				) -
+				(
+					
+					coalesce(
+									(
+										select coalesce(sum("treatment_price"."unit_price"),0)
+										from "product_treatment", "treatment_h", "treatment_price", "prep_treatment"
+										where 	"product_treatment"."treatment_code" = "treatment_h"."treatment_code" and
+													"treatment_h"."treatment_Code" = "treatment_price"."treatment_code" and
+													"treatment_price"."effective_date" in
+													(
+				
+														select max("tp"."effective_date")
+														from "treatment_price" as "tp"
+														where "tp"."treatment_Code" = "treatment_price"."treatment_code"
+													) and
+													"product_treatment"."product_id" = prep_manf.product_id and
+													product_treatment.texture_treatment = 'N'  and
+													"prep_treatment"."treatment_Code" = "treatment_h"."treatment_code" and
+													"prep_treatment"."treatment_Code" in ('L120', 'L121','L120B','L134') and
+													"prep_treatment"."prep_id" = "prep"."prep_id" and
+													"prep_treatment"."quote_no" = used_quote
+									),
+									0
+						
+
+							  )
+
+				
+
+				) 
+ 
+
+			 )as base_cost_new ,
+
+			 ((if is_myexclusive = 'Y' then myexclusive_price else  base_cost_new  endif) + "prep_manf"."treatment_cost" +  "prep_manf"."cover_hardware_cost" ) as total_new ,
+		
+		    (
+				((if is_myexclusive = 'Y' then myexclusive_price else  base_cost_new  endif)  * dealer_discount_factor ) + 
+				dbf_get_treatment_cost_of_job("prep"."prep_id", used_quote ) +				
+			   ("prep_manf"."cover_hardware_cost" * dealer_discount_factor) 
+
+			 ) as net_new ,
+
+	
+
+			(if wallbottom = wallbottom_quote      then
+					if is_pearlessence_embossed > 0 then
+						1
+					else
+						0
+					endif
+				else
+						1
+				endif ) as showme,
+				("prep_manf"."liner_wall_thickness" || "prep_manf"."liner_bottom_thickness") as wallbottom ,
+			'2820' as wallbottom_quote,
+			prep_manf.sqft ,
+			prep_manf.sales_tax , 
+			product.description ,
+			(
+				if is_pearlessence_embossed > 0 then
+					(
+						select p.description
+						from product as p
+						where p.product_id = 148
+					)
+				else
+					''
+				endif
+
+
+			) as new_product_description ,
+			(	Select count (*) 
+				from "prep_rules" 
+				where ( "prep_rules"."prep_id" = prep.prep_id ) and 
+						( "prep_rules"."type" = 'List' ) and 
+						( "prep_rules"."active" = 'Y' )) as list_only ,
+			'Wall: 28 mil - Bottom: 20 mil' as quote_type ,
+			'3' as letter_quote ,
+			(
+				select count(*)
+				from prep_manf as pm
+				where pm.prep_id = prep_manf.prep_id and
+						(
+							pm.liner_wall_thickness  = 28 and liner_bottom_thickness = 20 and
+							pm.product_id = prep_manf.product_id and
+							pm.quote_no <> used_quote
+						) 	
+							and
+						(
+							is_pearlessence_embossed = 0
+						)
+
+			) as present ,
+			product.wall_thickness_allowed, 
+			product.bottom_thickness_allowed ,
+			(
+				select min(pm.quote_no)
+				from prep_manf as pm
+				where pm.prep_id = prep.prep_id and
+						pm.status > 0
+			) as used_quote,
+			product.product_id ,
+
+			(
+				select count(*)
+				from product_treatment, product as p
+				where product_treatment.product_id = p.product_id and
+						product_treatment.treatment_code  in ('L120', 'L121','L120B','L134') and
+						product_treatment.texture_treatment = 'N' and
+						product_treatment.active = 'Y' and
+						product_treatment.product_id =  product.product_id
+			) as is_pearlessence_embossed ,
+	
+			(
+				select warranty_Header.liner_extended_warranty
+				from warranty_header
+				where
+						(
+							(prep.prep_type = 'E' and prep.prep_id = warranty_header.prep_id) or
+							(prep.prep_type = 'O' and prep.order_no = warranty_header.order_no) 
+						)
+			) as lew,
+
+			(
+				select warranty_Header.liner_extended_warranty_type
+				from warranty_header
+				where
+						(
+							(prep.prep_type = 'E' and prep.prep_id = warranty_header.prep_id) or
+							(prep.prep_type = 'O' and prep.order_no = warranty_header.order_no) 
+						)
+			) as lew_type ,
+
+			(
+				select max(coalesce(warranty_header.lew_amount,0))
+				from warranty_Header
+				where (
+							(prep.prep_type = 'E' and prep.prep_id = warranty_header.prep_id) or
+							(prep.prep_type = 'O' and prep.order_no = warranty_header.order_no) 
+						)
+
+			) as lewamount 
+			
+				
+    FROM "prep",   
+         "prep_manf" ,
+			"product"  
+   WHERE ( "prep"."prep_id" = "prep_manf"."prep_id" ) AND  
+         ( "prep_manf"."quote_no" = used_quote ) AND  
+         ( "prep"."type" = 'LN' ) AND  
+         ( "prep_manf"."product_group" = 'C' )    and
+			prep.prep_id = :al_prep_id and
+			prep_manf.base_cost > 0 and
+			prep_manf.status > 0 and
+			prep_manf.product_id = product.product_id and
+			showme = 1 and
+			present = 0 and
+			(
+				(
+					product.wall_thickness_allowed in ('A','28') and
+					product.bottom_thickness_allowed in ('A','20')
+				) 	or
+				(
+					is_pearlessence_embossed > 0
+				)
+			)
+ 
+union
+
+  SELECT "prep"."prep_id",   
+         "prep_manf"."base_cost",   
+         "prep_manf"."treatment_cost",   
+         "prep_manf"."cover_hardware_cost",  
+			prep_manf.cover_net, 
+         "prep_manf"."other_list",   
+         "prep_manf"."other_net",   
+         "prep_manf"."markdown",   
+         "prep_manf"."liner_wall_thickness",   
+         "prep_manf"."liner_bottom_thickness",   
+         "prep_manf"."shape" ,
+			"prep_manf"."dealer_discount",
+			f_Effective_Discount("prep_manf"."dealer_discount") as dealer_discount_factor,
+
+
+			dbf_is_myexclusive(prep_manf.prep_id, prep_manf.quote_no) as is_myexclusive,
+
+			(if is_myexclusive = 'Y' then
+				f_get_price(1186,prep_manf.grid_size,prep_manf.sqft,prep_manf.shape) * prep_manf.sqft
+			else
+				0
+			endif) as myexclusive_price,
+
+
+
+			f_get_discount_for_liners(prep_manf.prep_id, prep_manf.quote_no, "prep_manf"."liner_wall_thickness","prep_manf"."liner_bottom_thickness") as liner_upcharge,
+ 
+			(if prep_manf.shape = 'FF' and 3 = 4 then
+				(    ("prep_manf"."base_cost" / 1.15 ) / (1 + liner_upcharge      )   )
+			 else
+				(    ("prep_manf"."base_cost") / (1 + liner_upcharge      )   )
+			 endif) as base_cost_raw ,
+			
+			 f_get_discount_for_liners( prep_manf.prep_id, prep_manf.quote_no, 28,28) as liner_upcharge_new ,
+
+			 (
+			 	(
+					if prep_manf.shape = 'FF'  and 3 = 4 then
+						(base_cost_raw * (1 + liner_upcharge_new) )  * 1.15
+			 		else
+						(base_cost_raw * (1 + liner_upcharge_new) )
+			 		endif
+				) -
+				(
+					
+					coalesce(
+									(
+										select coalesce(sum("treatment_price"."unit_price"),0)
+										from "product_treatment", "treatment_h", "treatment_price", "prep_treatment"
+										where 	"product_treatment"."treatment_code" = "treatment_h"."treatment_code" and
+													"treatment_h"."treatment_Code" = "treatment_price"."treatment_code" and
+													"treatment_price"."effective_date" in
+													(
+				
+														select max("tp"."effective_date")
+														from "treatment_price" as "tp"
+														where "tp"."treatment_Code" = "treatment_price"."treatment_code"
+													) and
+													"product_treatment"."product_id" = prep_manf.product_id and
+													product_treatment.texture_treatment = 'N'  and
+													"prep_treatment"."treatment_Code" = "treatment_h"."treatment_code" and
+													"prep_treatment"."treatment_Code" in ('L120', 'L121','L120B','L134') and
+													"prep_treatment"."prep_id" = "prep"."prep_id" and
+													"prep_treatment"."quote_no" = used_quote
+									),
+									0
+						
+
+							  )
+
+				
+
+				) 
+ 
+
+			  ) as base_cost_new ,
+
+			 ((if is_myexclusive = 'Y' then myexclusive_price else  base_cost_new  endif) + "prep_manf"."treatment_cost" +  "prep_manf"."cover_hardware_cost" ) as total_new ,
+		
+		    (
+				((if is_myexclusive = 'Y' then myexclusive_price else  base_cost_new  endif)  * dealer_discount_factor ) + 
+				dbf_get_treatment_cost_of_job("prep"."prep_id", used_quote ) +				
+			   ("prep_manf"."cover_hardware_cost" * dealer_discount_factor) 
+
+			 ) as net_new ,
+
+			
+
+			(if wallbottom = wallbottom_quote     then
+				if is_pearlessence_embossed > 0 then
+						1
+				else
+						0
+				endif
+				else
+						1
+				endif  ) as showme,
+			("prep_manf"."liner_wall_thickness" || "prep_manf"."liner_bottom_thickness") as wallbottom ,
+			'2828' as wallbottom_quote,
+			prep_manf.sqft ,
+			prep_manf.sales_tax ,
+			product.description ,
+			(
+				if is_pearlessence_embossed > 0 then
+					(
+						select p.description
+						from product as p
+						where p.product_id = 148
+					)
+				else
+					''
+				endif
+
+
+			) as new_product_description ,
+			(	Select count (*) 
+				from "prep_rules" 
+				where ( "prep_rules"."prep_id" = prep.prep_id ) and 
+						( "prep_rules"."type" = 'List' ) and 
+						( "prep_rules"."active" = 'Y' )) as list_only ,
+			'Wall: 28 mil - Bottom: 28 mil' as quote_type 	,
+			'4' as letter_quote		,
+			(
+				select count(*)
+				from prep_manf as pm
+				where pm.prep_id = prep_manf.prep_id and
+						(
+							pm.liner_wall_thickness  = 28 and liner_bottom_thickness = 28 and
+							pm.product_id = prep_manf.product_id and
+							pm.quote_no <> used_quote
+						) 	
+							and
+						(
+							is_pearlessence_embossed = 0
+						)
+
+			) as present ,
+			product.wall_thickness_allowed, 
+			product.bottom_thickness_allowed ,
+			(
+				select min(pm.quote_no)
+				from prep_manf as pm
+				where pm.prep_id = prep.prep_id and
+						pm.status > 0
+			) as used_quote,
+			product.product_id ,
+
+			(
+				select count(*)
+				from product_treatment, product as p
+				where product_treatment.product_id = p.product_id and
+						product_treatment.treatment_code  in ('L120', 'L121','L120B','L134') and
+						product_treatment.texture_treatment = 'N' and
+						product_treatment.active = 'Y' and
+						product_treatment.product_id =  product.product_id
+			) as is_pearlessence_embossed ,
+
+			(
+				select warranty_Header.liner_extended_warranty
+				from warranty_header
+				where
+						(
+							(prep.prep_type = 'E' and prep.prep_id = warranty_header.prep_id) or
+							(prep.prep_type = 'O' and prep.order_no = warranty_header.order_no) 
+						)
+			) as lew,
+
+			(
+				select warranty_Header.liner_extended_warranty_type
+				from warranty_header
+				where
+						(
+							(prep.prep_type = 'E' and prep.prep_id = warranty_header.prep_id) or
+							(prep.prep_type = 'O' and prep.order_no = warranty_header.order_no) 
+						)
+			) as lew_type ,
+
+			(
+				select max(coalesce(warranty_header.lew_amount,0))
+				from warranty_Header
+				where (
+							(prep.prep_type = 'E' and prep.prep_id = warranty_header.prep_id) or
+							(prep.prep_type = 'O' and prep.order_no = warranty_header.order_no) 
+						)
+
+			) as lewamount 
+				
+    FROM "prep",   
+         "prep_manf" ,
+			"product"  
+   WHERE ( "prep"."prep_id" = "prep_manf"."prep_id" ) AND  
+         ( "prep_manf"."quote_no" = used_quote ) AND  
+         ( "prep"."type" = 'LN' ) AND  
+         ( "prep_manf"."product_group" = 'C' )    and
+			prep.prep_id = :al_prep_id and 
+			
+			prep_manf.base_cost > 0 and
+			prep_manf.status > 0 and
+			prep_manf.product_id = product.product_id and
+			showme = 1 and
+			present = 0 and
+			(
+				(
+					product.wall_thickness_allowed in ('A','28') and
+					product.bottom_thickness_allowed in ('A','28')
+				) 	or
+				(
+					is_pearlessence_embossed > 0
+				)
+			)
+
+
+
+
+
+
+
+
+
+UNION
+
+  SELECT "prep"."prep_id",   
+         "prep_manf"."base_cost",   
+         "prep_manf"."treatment_cost",   
+         "prep_manf"."cover_hardware_cost",  
+			prep_manf.cover_net, 
+         "prep_manf"."other_list",   
+         "prep_manf"."other_net",   
+         "prep_manf"."markdown",   
+         "prep_manf"."liner_wall_thickness",   
+         "prep_manf"."liner_bottom_thickness",   
+         "prep_manf"."shape" ,
+			"prep_manf"."dealer_discount",
+			f_Effective_Discount("prep_manf"."dealer_discount") as dealer_discount_factor,
+
+			dbf_is_myexclusive(prep_manf.prep_id, prep_manf.quote_no) as is_myexclusive,
+
+			(if is_myexclusive = 'Y' then
+				f_get_price(1185,prep_manf.grid_size,prep_manf.sqft,prep_manf.shape) * prep_manf.sqft 
+			else
+				0
+			endif) as myexclusive_price,
+
+
+			f_get_discount_for_liners(prep_manf.prep_id, prep_manf.quote_no, "prep_manf"."liner_wall_thickness","prep_manf"."liner_bottom_thickness") as liner_upcharge,
+
+			(if prep_manf.shape = 'FF' and 3 = 4 then
+				(    ("prep_manf"."base_cost" / 1.15 ) / (1 + liner_upcharge      )   )
+			 else
+				(    ("prep_manf"."base_cost") / (1 + liner_upcharge      )   )
+			 endif) as base_cost_raw ,
+			 f_get_discount_for_liners(prep_manf.prep_id, prep_manf.quote_no, 20,20)  liner_upcharge_new ,
+
+
+			 (			
+			  (if prep_manf.shape = 'FF'  and 3 = 4 then
+				 (base_cost_raw * (1 + liner_upcharge_new) )  * 1.15
+			 	else
+				 (base_cost_raw * (1 + liner_upcharge_new) )
+			   endif) 
+				-
+				(
+					coalesce(
+									(
+										select sum("treatment_price"."unit_price")
+										from "product_treatment", "treatment_h", "treatment_price", "prep_treatment"
+										where 	"product_treatment"."treatment_code" = "treatment_h"."treatment_code" and
+													"treatment_h"."treatment_Code" = "treatment_price"."treatment_code" and
+													"treatment_price"."effective_date" in
+													(
+				
+														select max("tp"."effective_date")
+														from "treatment_price" as "tp"
+														where "tp"."treatment_Code" = "treatment_price"."treatment_code"
+													) and
+													"product_treatment"."product_id" = prep_manf.product_id and
+													product_treatment.texture_treatment = 'N' and
+													"product_treatment"."product_id" = prep_manf.product_id and
+													product_treatment.texture_treatment = 'N'  and
+													"prep_treatment"."treatment_Code" = "treatment_h"."treatment_code" and
+													"prep_treatment"."treatment_Code" in ('L120', 'L121','L120B','L134') and
+													"prep_treatment"."prep_id" = "prep"."prep_id" and
+													"prep_treatment"."quote_no" = used_quote
+									),
+									0
+						
+
+							  )
+
+				)
+			 )
+			as base_cost_new ,
+
+			 (
+				(if is_myexclusive = 'Y' then 
+						myexclusive_price else  base_cost_new  endif) + 
+						"prep_manf"."treatment_cost" +  
+						(
+							select sum("treatment_price"."unit_price")
+							from "product_treatment", "treatment_h", "treatment_price"
+							where 	"product_treatment"."treatment_code" = "treatment_h"."treatment_code" and
+										"treatment_h"."treatment_Code" = "treatment_price"."treatment_code" and
+										"treatment_price"."effective_date" in
+											(
+				
+												select max("tp"."effective_date")
+												from "treatment_price" as "tp"
+												where "tp"."treatment_Code" = "treatment_price"."treatment_code"
+											) and
+										"product_treatment"."product_id" = product.product_id  and
+										product_treatment.texture_treatment = 'N' and
+										3 = 3
+						) +
+
+
+
+						"prep_manf"."cover_hardware_cost" 
+			 ) as total_new ,
+		
+		    (
+				((if is_myexclusive = 'Y' then myexclusive_price else  base_cost_new  endif)  * dealer_discount_factor ) + 
+				dbf_get_treatment_cost_of_job("prep"."prep_id", used_quote ) +	
+				(
+						(
+							select sum("treatment_price"."unit_price")
+							from "product_treatment", "treatment_h", "treatment_price"
+							where 	"product_treatment"."treatment_code" = "treatment_h"."treatment_code" and
+										"treatment_h"."treatment_Code" = "treatment_price"."treatment_code" and
+										"treatment_price"."effective_date" in
+											(
+				
+												select max("tp"."effective_date")
+												from "treatment_price" as "tp"
+												where "tp"."treatment_Code" = "treatment_price"."treatment_code"
+											) and
+										"product_treatment"."product_id" = product.product_id  and
+										product_treatment.texture_treatment = 'N' and
+										3 = 3
+						) * dealer_discount_factor
+
+				)  +
+			   ("prep_manf"."cover_hardware_cost" * dealer_discount_factor) 
+
+
+			 ) as net_new ,
+			
+			
+
+			(
+				if (wallbottom || '_pearl' ) = wallbottom_quote     then
+					if is_pearlessence_embossed = 0 then
+						1
+					else
+						0
+					endif
+						
+				else
+						1
+				endif
+		   ) as showme ,
+			("prep_manf"."liner_wall_thickness" || "prep_manf"."liner_bottom_thickness") as wallbottom ,
+			'2020_pearl' as wallbottom_quote,
+			 prep_manf.sqft ,
+			prep_manf.sales_tax ,
+			product.description ,
+			(
+				''
+
+
+			) as new_product_description ,
+
+			(	Select count (*) 
+				from "prep_rules" 
+				where ( "prep_rules"."prep_id" = prep.prep_id ) and 
+						( "prep_rules"."type" = 'List' ) and 
+						( "prep_rules"."active" = 'Y' )) as list_only ,
+			'Wall: 20 mil - Bottom: 20 mil' as quote_type ,
+			'6' as letter_quote ,
+			(
+				select  count(*)
+				from "prep_treatment", "prep_manf" as "pm"
+				where "prep_treatment"."prep_id" = "prep"."prep_id" and
+						"prep_treatment"."treatment_Code" in ( 'L120','L120B')  and
+						prep_treatment.quote_no <> used_quote and
+						"pm".prep_id = prep_treatment.prep_id and
+						"pm".quote_no = prep_treatment.quote_no and
+						pm.liner_wall_thickness  = 20 and liner_bottom_thickness = 20
+			) as present ,
+			product.wall_thickness_allowed, 
+			product.bottom_thickness_allowed ,
+			(
+				select min(pm.quote_no)
+				from prep_manf as pm
+				where pm.prep_id = prep.prep_id and
+						pm.status > 0
+			) as used_quote,
+			product.product_id ,
+
+			(
+				select count(*)
+				from product_treatment, product as p
+				where product_treatment.product_id = p.product_id and
+						product_treatment.treatment_code  in ('L120','L120B') and
+						product_treatment.texture_treatment = 'N' and
+						product_treatment.active = 'Y' and
+						product_treatment.product_id =  prep_manf.product_id
+			) as is_pearlessence_embossed ,
+
+			(
+				select warranty_Header.liner_extended_warranty
+				from warranty_header
+				where
+						(
+							(prep.prep_type = 'E' and prep.prep_id = warranty_header.prep_id) or
+							(prep.prep_type = 'O' and prep.order_no = warranty_header.order_no) 
+						)
+			) as lew,
+
+			(
+				select warranty_Header.liner_extended_warranty_type
+				from warranty_header
+				where
+						(
+							(prep.prep_type = 'E' and prep.prep_id = warranty_header.prep_id) or
+							(prep.prep_type = 'O' and prep.order_no = warranty_header.order_no) 
+						)
+			) as lew_type ,
+
+			(
+				select max(coalesce(warranty_header.lew_amount,0))
+				from warranty_Header
+				where (
+							(prep.prep_type = 'E' and prep.prep_id = warranty_header.prep_id) or
+							(prep.prep_type = 'O' and prep.order_no = warranty_header.order_no) 
+						)
+
+			) as lewamount 
+				
+    FROM "prep",   
+         "prep_manf" ,
+			"product" 
+   WHERE ( "prep"."prep_id" = "prep_manf"."prep_id" ) AND  
+         ( "prep_manf"."quote_no" = used_quote ) AND  
+         ( "prep"."type" = 'LN' ) AND  
+         ( "prep_manf"."product_group" = 'C' )    and
+			prep.prep_id = :al_prep_id and
+			prep_manf.base_cost > 0 and
+			prep_manf.status > 0 and
+			1362 = product.product_id and
+			showme = 1 and
+			present = 0  and
+			is_myexclusive = 'N' AND
+			(
+				(is_pearlessence_embossed = 0 ) or
+				(
+					(
+						select count(*)
+						from product as p
+						where (p.wall_thickness_allowed = 'A' or p.wall_thickness_allowed = '20' ) and
+								(p.bottom_thickness_allowed = 'A' or p.bottom_thickness_allowed = '20') and
+								(p.product_id = prep_manf.product_id )
+					) > 0
+				)
+
+			) 
+
+UNION
+
+  SELECT "prep"."prep_id",   
+         "prep_manf"."base_cost",   
+         "prep_manf"."treatment_cost",   
+         "prep_manf"."cover_hardware_cost",  
+			prep_manf.cover_net, 
+         "prep_manf"."other_list",   
+         "prep_manf"."other_net",   
+         "prep_manf"."markdown",   
+         "prep_manf"."liner_wall_thickness",   
+         "prep_manf"."liner_bottom_thickness",   
+         "prep_manf"."shape" ,
+			"prep_manf"."dealer_discount",
+			f_Effective_Discount("prep_manf"."dealer_discount") as dealer_discount_factor,
+
+			dbf_is_myexclusive(prep_manf.prep_id, prep_manf.quote_no) as is_myexclusive,
+
+			(if is_myexclusive = 'Y' then
+				f_get_price(1185,prep_manf.grid_size,prep_manf.sqft,prep_manf.shape) * prep_manf.sqft 
+			else
+				0
+			endif) as myexclusive_price,
+
+
+			f_get_discount_for_liners(prep_manf.prep_id, prep_manf.quote_no, "prep_manf"."liner_wall_thickness","prep_manf"."liner_bottom_thickness") as liner_upcharge,
+
+			(if prep_manf.shape = 'FF' and 3 = 4 then
+				(    ("prep_manf"."base_cost" / 1.15 ) / (1 + liner_upcharge      )   )
+			 else
+				(    ("prep_manf"."base_cost") / (1 + liner_upcharge      )   )
+			 endif) as base_cost_raw ,
+			 f_get_discount_for_liners(prep_manf.prep_id, prep_manf.quote_no, 28,20)  liner_upcharge_new ,
+
+			 (
+			 	(if prep_manf.shape = 'FF'  and 3 = 4 then
+					(base_cost_raw * (1 + liner_upcharge_new) )  * 1.15
+			 	 else
+					(base_cost_raw * (1 + liner_upcharge_new) )
+			 	 endif)
+				 -
+				(
+					coalesce(
+									(
+										select sum("treatment_price"."unit_price")
+										from "product_treatment", "treatment_h", "treatment_price", "prep_treatment"
+										where 	"product_treatment"."treatment_code" = "treatment_h"."treatment_code" and
+													"treatment_h"."treatment_Code" = "treatment_price"."treatment_code" and
+													"treatment_price"."effective_date" in
+													(
+				
+														select max("tp"."effective_date")
+														from "treatment_price" as "tp"
+														where "tp"."treatment_Code" = "treatment_price"."treatment_code"
+													) and
+													"product_treatment"."product_id" = prep_manf.product_id  and
+													product_treatment.texture_treatment = 'N' and
+													"product_treatment"."product_id" = prep_manf.product_id and
+													product_treatment.texture_treatment = 'N'  and
+													"prep_treatment"."treatment_Code" = "treatment_h"."treatment_code" and
+													"prep_treatment"."treatment_Code" in ('L120', 'L121','L120B','L134') and
+													"prep_treatment"."prep_id" = "prep"."prep_id" and
+													"prep_treatment"."quote_no" = used_quote
+									),
+									0
+						
+
+							  )
+
+				)
+
+			 ) as base_cost_new ,
+
+			 (
+				(if is_myexclusive = 'Y' then myexclusive_price else  base_cost_new  endif) + 
+					"prep_manf"."treatment_cost" +  
+					(
+							select sum("treatment_price"."unit_price")
+							from "product_treatment", "treatment_h", "treatment_price"
+							where 	"product_treatment"."treatment_code" = "treatment_h"."treatment_code" and
+										"treatment_h"."treatment_Code" = "treatment_price"."treatment_code" and
+										"treatment_price"."effective_date" in
+											(
+				
+												select max("tp"."effective_date")
+												from "treatment_price" as "tp"
+												where "tp"."treatment_Code" = "treatment_price"."treatment_code"
+											) and
+										"product_treatment"."product_id" = product.product_id  and
+										product_treatment.texture_treatment = 'N' and
+										3 = 3
+					) +
+
+
+					"prep_manf"."cover_hardware_cost" 
+			 ) as total_new ,
+		
+		    (
+				((if is_myexclusive = 'Y' then myexclusive_price else  base_cost_new  endif)  * dealer_discount_factor ) + 
+				dbf_get_treatment_cost_of_job("prep"."prep_id", used_quote ) +	
+				(
+						(
+							select sum("treatment_price"."unit_price")
+							from "product_treatment", "treatment_h", "treatment_price"
+							where 	"product_treatment"."treatment_code" = "treatment_h"."treatment_code" and
+										"treatment_h"."treatment_Code" = "treatment_price"."treatment_code" and
+										"treatment_price"."effective_date" in
+											(
+				
+												select max("tp"."effective_date")
+												from "treatment_price" as "tp"
+												where "tp"."treatment_Code" = "treatment_price"."treatment_code"
+											) and
+										"product_treatment"."product_id" = product.product_id  and
+										product_treatment.texture_treatment = 'N' and
+										3 = 3
+						) * dealer_discount_factor
+
+				)  +
+			   ("prep_manf"."cover_hardware_cost" * dealer_discount_factor) 
+
+			 ) as net_new ,
+			
+			
+
+			(
+				if (wallbottom || '_pearl' ) = wallbottom_quote     then
+					if is_pearlessence_embossed = 0 then
+						1
+					else
+						0
+					endif
+						
+				else
+						1
+				endif
+		   ) as showme ,
+			("prep_manf"."liner_wall_thickness" || "prep_manf"."liner_bottom_thickness") as wallbottom ,
+			'2820_pearl' as wallbottom_quote,
+			 prep_manf.sqft ,
+			prep_manf.sales_tax ,
+			product.description ,
+			(
+				''
+
+
+			) as new_product_description ,
+
+			(	Select count (*) 
+				from "prep_rules" 
+				where ( "prep_rules"."prep_id" = prep.prep_id ) and 
+						( "prep_rules"."type" = 'List' ) and 
+						( "prep_rules"."active" = 'Y' )) as list_only ,
+			'Wall: 28 mil - Bottom: 20 mil' as quote_type ,
+			'7' as letter_quote ,
+			(
+				select  count(*)
+				from "prep_treatment", "prep_manf" as "pm"
+				where "prep_treatment"."prep_id" = "prep"."prep_id" and
+						"prep_treatment"."treatment_Code" in ( 'L120','L120B') and
+						prep_treatment.quote_no <> used_quote and
+						"pm".prep_id = prep_treatment.prep_id and
+						"pm".quote_no = prep_treatment.quote_no and
+						pm.liner_wall_thickness  = 28 and liner_bottom_thickness = 20 
+			) as present ,
+			product.wall_thickness_allowed, 
+			product.bottom_thickness_allowed ,
+			(
+				select min(pm.quote_no)
+				from prep_manf as pm
+				where pm.prep_id = prep.prep_id and
+						pm.status > 0
+			) as used_quote,
+			product.product_id ,
+
+			(
+				select count(*)
+				from product_treatment, product as p
+				where product_treatment.product_id = p.product_id and
+						product_treatment.treatment_code  in ('L120','L120B') and
+						product_treatment.texture_treatment = 'N' and
+						product_treatment.active = 'Y' and
+						product_treatment.product_id =  prep_manf.product_id
+			) as is_pearlessence_embossed ,
+
+			(
+				select warranty_Header.liner_extended_warranty
+				from warranty_header
+				where
+						(
+							(prep.prep_type = 'E' and prep.prep_id = warranty_header.prep_id) or
+							(prep.prep_type = 'O' and prep.order_no = warranty_header.order_no) 
+						)
+			) as lew,
+
+			(
+				select warranty_Header.liner_extended_warranty_type
+				from warranty_header
+				where
+						(
+							(prep.prep_type = 'E' and prep.prep_id = warranty_header.prep_id) or
+							(prep.prep_type = 'O' and prep.order_no = warranty_header.order_no) 
+						)
+			) as lew_type ,
+
+			(
+				select max(coalesce(warranty_header.lew_amount,0))
+				from warranty_Header
+				where (
+							(prep.prep_type = 'E' and prep.prep_id = warranty_header.prep_id) or
+							(prep.prep_type = 'O' and prep.order_no = warranty_header.order_no) 
+						)
+
+			) as lewamount 
+				
+    FROM "prep",   
+         "prep_manf" ,
+			"product" 
+   WHERE ( "prep"."prep_id" = "prep_manf"."prep_id" ) AND  
+         ( "prep_manf"."quote_no" = used_quote ) AND  
+         ( "prep"."type" = 'LN' ) AND  
+         ( "prep_manf"."product_group" = 'C' )    and
+			prep.prep_id = :al_prep_id and
+			prep_manf.base_cost > 0 and
+			prep_manf.status > 0 and
+			1362 = product.product_id and
+			showme = 1 and
+			present = 0  and
+			is_myexclusive = 'N' and
+			
+			(
+				(is_pearlessence_embossed = 0 ) or
+				(
+					(
+						select count(*)
+						from product as p
+						where (p.wall_thickness_allowed = 'A' or p.wall_thickness_allowed = '28') and
+								(p.bottom_thickness_allowed = 'A' or p.bottom_thickness_allowed = '20') and
+								(p.product_id = prep_manf.product_id )
+					) > 0
+				)
+
+			) 
+ 
+
+UNION
+
+  SELECT "prep"."prep_id",   
+         "prep_manf"."base_cost",   
+         "prep_manf"."treatment_cost",   
+         "prep_manf"."cover_hardware_cost",  
+			prep_manf.cover_net, 
+         "prep_manf"."other_list",   
+         "prep_manf"."other_net",   
+         "prep_manf"."markdown",   
+         "prep_manf"."liner_wall_thickness",   
+         "prep_manf"."liner_bottom_thickness",   
+         "prep_manf"."shape" ,
+			"prep_manf"."dealer_discount",
+			f_Effective_Discount("prep_manf"."dealer_discount") as dealer_discount_factor,
+
+			dbf_is_myexclusive(prep_manf.prep_id, prep_manf.quote_no) as is_myexclusive,
+
+			(if is_myexclusive = 'Y' then
+				f_get_price(1185,prep_manf.grid_size,prep_manf.sqft,prep_manf.shape) * prep_manf.sqft 
+			else
+				0
+			endif) as myexclusive_price,
+
+
+			f_get_discount_for_liners(prep_manf.prep_id, prep_manf.quote_no, "prep_manf"."liner_wall_thickness","prep_manf"."liner_bottom_thickness") as liner_upcharge,
+
+			(if prep_manf.shape = 'FF'  and 3 = 4 then
+				(    ("prep_manf"."base_cost" / 1.15 ) / (1 + liner_upcharge      )   )
+			 else
+				(    ("prep_manf"."base_cost") / (1 + liner_upcharge      )   )
+			 endif) as base_cost_raw ,
+			 f_get_discount_for_liners(prep_manf.prep_id, prep_manf.quote_no, 28,28)  liner_upcharge_new ,
+
+
+			 (
+			 	(if prep_manf.shape = 'FF'  and 3 = 4 then
+					(base_cost_raw * (1 + liner_upcharge_new) )  * 1.15
+			 	 else
+					(base_cost_raw * (1 + liner_upcharge_new) )
+			 	 endif)
+				 -
+
+				(
+					coalesce(
+									(
+										select sum("treatment_price"."unit_price")
+										from "product_treatment", "treatment_h", "treatment_price" ,"prep_treatment"
+										where 	"product_treatment"."treatment_code" = "treatment_h"."treatment_code" and
+													"treatment_h"."treatment_Code" = "treatment_price"."treatment_code" and
+													"treatment_price"."effective_date" in
+													(
+				
+														select max("tp"."effective_date")
+														from "treatment_price" as "tp"
+														where "tp"."treatment_Code" = "treatment_price"."treatment_code"
+													) and
+													"product_treatment"."product_id" = prep_manf.product_id  and
+													product_treatment.texture_treatment = 'N' and
+													"product_treatment"."product_id" = prep_manf.product_id and
+													product_treatment.texture_treatment = 'N'  and
+													"prep_treatment"."treatment_Code" = "treatment_h"."treatment_code" and
+													"prep_treatment"."treatment_Code" in ('L120', 'L121','L120B','L134') and
+													"prep_treatment"."prep_id" = "prep"."prep_id" and
+													"prep_treatment"."quote_no" = used_quote
+									),
+									0
+						
+
+							  )
+
+				)
+
+			 )as base_cost_new ,
+
+			 (
+					(if is_myexclusive = 'Y' then myexclusive_price else  base_cost_new  endif) + 
+					"prep_manf"."treatment_cost" +  
+					(
+							select sum("treatment_price"."unit_price")
+							from "product_treatment", "treatment_h", "treatment_price"
+							where 	"product_treatment"."treatment_code" = "treatment_h"."treatment_code" and
+										"treatment_h"."treatment_Code" = "treatment_price"."treatment_code" and
+										"treatment_price"."effective_date" in
+											(
+				
+												select max("tp"."effective_date")
+												from "treatment_price" as "tp"
+												where "tp"."treatment_Code" = "treatment_price"."treatment_code"
+											) and
+										"product_treatment"."product_id" = product.product_id  and
+										product_treatment.texture_treatment = 'N' and
+										3 = 3
+				   ) +
+
+
+					"prep_manf"."cover_hardware_cost" 
+			 ) as total_new ,
+		
+		    (
+				((if is_myexclusive = 'Y' then myexclusive_price else  base_cost_new  endif)  * dealer_discount_factor ) + 
+				dbf_get_treatment_cost_of_job("prep"."prep_id", used_quote ) +	
+				(
+						(
+							select sum("treatment_price"."unit_price")
+							from "product_treatment", "treatment_h", "treatment_price"
+							where 	"product_treatment"."treatment_code" = "treatment_h"."treatment_code" and
+										"treatment_h"."treatment_Code" = "treatment_price"."treatment_code" and
+										"treatment_price"."effective_date" in
+											(
+				
+												select max("tp"."effective_date")
+												from "treatment_price" as "tp"
+												where "tp"."treatment_Code" = "treatment_price"."treatment_code"  and
+												product_treatment.texture_treatment = 'N' and
+												3 = 3
+											) and
+										"product_treatment"."product_id" = product.product_id
+						) * dealer_discount_factor
+
+				)  +
+			   ("prep_manf"."cover_hardware_cost" * dealer_discount_factor) 
+
+			 ) as net_new ,
+			
+			
+
+			(
+				if ( wallbottom || '_pearl' ) = wallbottom_quote     then
+					if is_pearlessence_embossed = 0 then
+						1
+					else
+						0
+					endif
+						
+				else
+						1
+				endif
+		   ) as showme ,
+			("prep_manf"."liner_wall_thickness" || "prep_manf"."liner_bottom_thickness") as wallbottom ,
+			'2828_pearl' as wallbottom_quote,
+			 prep_manf.sqft ,
+			prep_manf.sales_tax ,
+			product.description ,
+			(
+				''
+
+
+			) as new_product_description ,
+
+			(	Select count (*) 
+				from "prep_rules" 
+				where ( "prep_rules"."prep_id" = prep.prep_id ) and 
+						( "prep_rules"."type" = 'List' ) and 
+						( "prep_rules"."active" = 'Y' )) as list_only ,
+			'Wall: 28 mil - Bottom: 28 mil' as quote_type ,
+			'8' as letter_quote ,
+			(
+				select  count(*)
+				from "prep_treatment" , "prep_manf" as "pm"
+				where "prep_treatment"."prep_id" = "prep"."prep_id" and
+						"prep_treatment"."treatment_Code" in ( 'L120','L120B')  and
+						prep_treatment.quote_no <> used_quote and
+						"pm".prep_id = prep_treatment.prep_id and
+						"pm".quote_no = prep_treatment.quote_no and
+						pm.liner_wall_thickness  = 28 and liner_bottom_thickness = 28
+			) as present ,
+			product.wall_thickness_allowed, 
+			product.bottom_thickness_allowed ,
+			(
+				select min(pm.quote_no)
+				from prep_manf as pm
+				where pm.prep_id = prep.prep_id and
+						pm.status > 0
+			) as used_quote,
+			product.product_id ,
+
+			(
+				select count(*)
+				from product_treatment, product as p
+				where product_treatment.product_id = p.product_id and
+						product_treatment.treatment_code  in ('L120','L120B') and
+						product_treatment.texture_treatment = 'N' and
+						product_treatment.active = 'Y' and
+						product_treatment.product_id =  prep_manf.product_id
+			) as is_pearlessence_embossed ,
+
+			(
+				select warranty_Header.liner_extended_warranty
+				from warranty_header
+				where
+						(
+							(prep.prep_type = 'E' and prep.prep_id = warranty_header.prep_id) or
+							(prep.prep_type = 'O' and prep.order_no = warranty_header.order_no) 
+						)
+			) as lew,
+
+			(
+				select warranty_Header.liner_extended_warranty_type
+				from warranty_header
+				where
+						(
+							(prep.prep_type = 'E' and prep.prep_id = warranty_header.prep_id) or
+							(prep.prep_type = 'O' and prep.order_no = warranty_header.order_no) 
+						)
+			) as lew_type ,
+
+			(
+				select max(coalesce(warranty_header.lew_amount,0))
+				from warranty_Header
+				where (
+							(prep.prep_type = 'E' and prep.prep_id = warranty_header.prep_id) or
+							(prep.prep_type = 'O' and prep.order_no = warranty_header.order_no) 
+						)
+
+			) as lewamount 
+				
+    FROM "prep",   
+         "prep_manf" ,
+			"product" 
+   WHERE ( "prep"."prep_id" = "prep_manf"."prep_id" ) AND  
+         ( "prep_manf"."quote_no" = used_quote ) AND  
+         ( "prep"."type" = 'LN' ) AND  
+         ( "prep_manf"."product_group" = 'C' )    and
+			prep.prep_id = :al_prep_id and
+			prep_manf.base_cost > 0 and
+			prep_manf.status > 0 and
+			1362 = product.product_id and
+			showme = 1 and
+			present = 0  and 
+			is_myexclusive = 'N'   AND
+			(
+				(is_pearlessence_embossed = 0 ) or
+				(
+					(
+						select count(*)
+						from product as p
+						where (p.wall_thickness_allowed = 'A' or p.wall_thickness_allowed = '28' ) and
+								(p.bottom_thickness_allowed = 'A' or p.bottom_thickness_allowed = '28') and
+								(p.product_id = prep_manf.product_id )
+					) > 0
+				)
+
+			) 
+
+
+UNION
+
+  SELECT "prep"."prep_id",   
+         "prep_manf"."base_cost",   
+         "prep_manf"."treatment_cost",   
+         "prep_manf"."cover_hardware_cost",  
+			prep_manf.cover_net, 
+         "prep_manf"."other_list",   
+         "prep_manf"."other_net",   
+         "prep_manf"."markdown",   
+         "prep_manf"."liner_wall_thickness",   
+         "prep_manf"."liner_bottom_thickness",   
+         "prep_manf"."shape" ,
+			"prep_manf"."dealer_discount",
+			f_Effective_Discount("prep_manf"."dealer_discount") as dealer_discount_factor,
+
+			dbf_is_myexclusive(prep_manf.prep_id, prep_manf.quote_no) as is_myexclusive,
+
+			(if is_myexclusive = 'Y' then
+				f_get_price(1185,prep_manf.grid_size,prep_manf.sqft,prep_manf.shape) * prep_manf.sqft 
+			else
+				0
+			endif) as myexclusive_price,
+
+
+			f_get_discount_for_liners(prep_manf.prep_id, prep_manf.quote_no, "prep_manf"."liner_wall_thickness","prep_manf"."liner_bottom_thickness") as liner_upcharge,
+
+			(if prep_manf.shape = 'FF' and 3 = 4 then
+				(    ("prep_manf"."base_cost" / 1.15 ) / (1 + liner_upcharge      )   )
+			 else
+				(    ("prep_manf"."base_cost") / (1 + liner_upcharge      )   )
+			 endif) as base_cost_raw ,
+			 f_get_discount_for_liners(prep_manf.prep_id, prep_manf.quote_no, 20,28)  liner_upcharge_new ,
+
+			 (
+			 	(if prep_manf.shape = 'FF' and 3 = 4  then
+					(base_cost_raw * (1 + liner_upcharge_new) )  * 1.15
+			 	 else
+					(base_cost_raw * (1 + liner_upcharge_new) )
+			 	endif)
+
+				-
+
+				(
+					coalesce(
+									(
+										select coalesce(sum("treatment_price"."unit_price"),0) 
+										from "product_treatment", "treatment_h", "treatment_price","prep_treatment"
+										where 	"product_treatment"."treatment_code" = "treatment_h"."treatment_code" and
+													"treatment_h"."treatment_Code" = "treatment_price"."treatment_code" and
+													"treatment_price"."effective_date" in
+													(
+				
+														select max("tp"."effective_date")
+														from "treatment_price" as "tp"
+														where "tp"."treatment_Code" = "treatment_price"."treatment_code"
+													) and
+													"product_treatment"."product_id" = prep_manf.product_id  and
+													product_treatment.texture_treatment = 'N' and
+													
+										"prep_treatment"."treatment_Code" = "treatment_h"."treatment_code" and
+										"prep_treatment"."treatment_Code" in ('L120', 'L121','L120B','L134') and
+										"prep_treatment"."prep_id" = "prep"."prep_id" and
+										"prep_treatment"."quote_no" = used_quote
+									),
+									0
+						
+
+							  )
+
+				) 
+			 )as base_cost_new ,
+
+			 (
+				(if is_myexclusive = 'Y' then myexclusive_price else  base_cost_new  endif) + 
+				"prep_manf"."treatment_cost" +  
+
+				(
+							select coalesce(sum("treatment_price"."unit_price"),0)
+							from "product_treatment", "treatment_h", "treatment_price"
+							where 	"product_treatment"."treatment_code" = "treatment_h"."treatment_code" and
+										"treatment_h"."treatment_Code" = "treatment_price"."treatment_code" and
+										"treatment_price"."effective_date" in
+											(
+				
+												select max("tp"."effective_date")
+												from "treatment_price" as "tp"
+												where "tp"."treatment_Code" = "treatment_price"."treatment_code" and
+														product_treatment.texture_treatment = 'N' 
+											) and
+										"product_treatment"."product_id" = product.product_id  
+										
+			   )  +
+ 
+
+				"prep_manf"."cover_hardware_cost" 
+			 ) as total_new ,
+		
+		    (
+				((if is_myexclusive = 'Y' then myexclusive_price else  base_cost_new  endif)  * dealer_discount_factor ) + 
+				dbf_get_treatment_cost_of_job("prep"."prep_id", used_quote ) +	
+				(
+						(
+							select sum("treatment_price"."unit_price")
+							from "product_treatment", "treatment_h", "treatment_price"
+							where 	"product_treatment"."treatment_code" = "treatment_h"."treatment_code" and
+										"treatment_h"."treatment_Code" = "treatment_price"."treatment_code" and
+										"treatment_price"."effective_date" in
+											(
+				
+												select max("tp"."effective_date")
+												from "treatment_price" as "tp"
+												where "tp"."treatment_Code" = "treatment_price"."treatment_code"
+											) and
+										"product_treatment"."product_id" = product.product_id  and
+										product_treatment.texture_treatment = 'N' and
+										3 = 3
+						) * dealer_discount_factor
+
+				)  +
+			   ("prep_manf"."cover_hardware_cost" * dealer_discount_factor) 
+
+			 ) as net_new ,
+			
+			
+
+			(
+				if ( wallbottom || '_pearl' ) = wallbottom_quote     then
+					if is_pearlessence_embossed = 0 then
+						1
+					else
+						0
+					endif
+						
+				else
+						1
+				endif
+		   ) as showme ,
+			("prep_manf"."liner_wall_thickness" || "prep_manf"."liner_bottom_thickness") as wallbottom ,
+			'2028_pearl' as wallbottom_quote,
+			 prep_manf.sqft ,
+			prep_manf.sales_tax ,
+			product.description ,
+			(
+				''
+
+
+			) as new_product_description ,
+
+			(	Select count (*) 
+				from "prep_rules" 
+				where ( "prep_rules"."prep_id" = prep.prep_id ) and 
+						( "prep_rules"."type" = 'List' ) and 
+						( "prep_rules"."active" = 'Y' )) as list_only ,
+			'Wall: 20 mil - Bottom: 28 mil' as quote_type ,
+			'9' as letter_quote ,
+			(
+				select  count(*)
+				from "prep_treatment" , "prep_manf" as "pm"
+				where "prep_treatment"."prep_id" = "prep"."prep_id" and
+						"prep_treatment"."treatment_Code" in ( 'L120','L120B') and
+						prep_treatment.quote_no <> used_quote and
+						"pm".prep_id = prep_treatment.prep_id and
+						"pm".quote_no = prep_treatment.quote_no and
+						pm.liner_wall_thickness  = 20 and liner_bottom_thickness = 28
+			) as present ,
+			product.wall_thickness_allowed, 
+			product.bottom_thickness_allowed ,
+			(
+				select min(pm.quote_no)
+				from prep_manf as pm
+				where pm.prep_id = prep.prep_id and
+						pm.status > 0
+			) as used_quote,
+			product.product_id ,
+
+			(
+				select count(*)
+				from product_treatment, product as p
+				where product_treatment.product_id = p.product_id and
+						product_treatment.treatment_code  in ('L120','L120B') and
+						product_treatment.texture_treatment = 'N' and
+						product_treatment.active = 'Y' and
+						product_treatment.product_id =  prep_manf.product_id
+			) as is_pearlessence_embossed ,
+
+			(
+				select warranty_Header.liner_extended_warranty
+				from warranty_header
+				where
+						(
+							(prep.prep_type = 'E' and prep.prep_id = warranty_header.prep_id) or
+							(prep.prep_type = 'O' and prep.order_no = warranty_header.order_no) 
+						)
+			) as lew,
+
+			(
+				select warranty_Header.liner_extended_warranty_type
+				from warranty_header
+				where
+						(
+							(prep.prep_type = 'E' and prep.prep_id = warranty_header.prep_id) or
+							(prep.prep_type = 'O' and prep.order_no = warranty_header.order_no) 
+						)
+			) as lew_type ,
+
+			(
+				select max(coalesce(warranty_header.lew_amount,0))
+				from warranty_Header
+				where (
+							(prep.prep_type = 'E' and prep.prep_id = warranty_header.prep_id) or
+							(prep.prep_type = 'O' and prep.order_no = warranty_header.order_no) 
+						)
+
+			) as lewamount 
+				
+    FROM "prep",   
+         "prep_manf" ,
+			"product" 
+   WHERE ( "prep"."prep_id" = "prep_manf"."prep_id" ) AND  
+         ( "prep_manf"."quote_no" = used_quote ) AND  
+         ( "prep"."type" = 'LN' ) AND  
+         ( "prep_manf"."product_group" = 'C' )    and
+			prep.prep_id = :al_prep_id and
+			prep_manf.base_cost > 0 and
+			prep_manf.status > 0 and
+			1362 = product.product_id and
+			showme = 1 and
+			present = 0  and
+			is_myexclusive = 'N' AND
+			(
+				(is_pearlessence_embossed = 0 ) or
+				(
+					(
+						select count(*)
+						from product as p
+						where (p.wall_thickness_allowed = 'A' or p.wall_thickness_allowed = '20') and
+								(p.bottom_thickness_allowed = 'A' or p.bottom_thickness_allowed = '28') and
+								(p.product_id = prep_manf.product_id )
+					) > 0
+				)
+
+			)
+
+
+
+
+
+
+
+
+
+
+
+
+
+UNION
+
+  SELECT "prep"."prep_id",   
+         "prep_manf"."base_cost",   
+         "prep_manf"."treatment_cost",   
+         "prep_manf"."cover_hardware_cost",  
+			prep_manf.cover_net, 
+         "prep_manf"."other_list",   
+         "prep_manf"."other_net",   
+         "prep_manf"."markdown",   
+         "prep_manf"."liner_wall_thickness",   
+         "prep_manf"."liner_bottom_thickness",   
+         "prep_manf"."shape" ,
+			"prep_manf"."dealer_discount",
+			f_Effective_Discount("prep_manf"."dealer_discount") as dealer_discount_factor,
+
+			dbf_is_myexclusive(prep_manf.prep_id, prep_manf.quote_no) as is_myexclusive,
+
+			(if is_myexclusive = 'Y' then
+				f_get_price(1185,prep_manf.grid_size,prep_manf.sqft,prep_manf.shape) * prep_manf.sqft 
+			else
+				0
+			endif) as myexclusive_price,
+
+
+			f_get_discount_for_liners(prep_manf.prep_id, prep_manf.quote_no, "prep_manf"."liner_wall_thickness","prep_manf"."liner_bottom_thickness") as liner_upcharge,
+
+			(if prep_manf.shape = 'FF'  and 3 = 4 then
+				(    ("prep_manf"."base_cost" / 1.15 ) / (1 + liner_upcharge      )   )
+			 else
+				(    ("prep_manf"."base_cost") / (1 + liner_upcharge      )   )
+			 endif) as base_cost_raw ,
+			 f_get_discount_for_liners(prep_manf.prep_id, prep_manf.quote_no, 20,20)  liner_upcharge_new ,
+
+			 (
+			 	(if prep_manf.shape = 'FF' and 3 = 4  then
+					(base_cost_raw * (1 + liner_upcharge_new) )  * 1.15
+			 	 else
+					(base_cost_raw * (1 + liner_upcharge_new) )
+			 	endif)
+				-
+
+				(
+					coalesce(
+									(
+										select sum("treatment_price"."unit_price")
+										from "product_treatment", "treatment_h", "treatment_price", "prep_treatment"
+
+										where 	"product_treatment"."treatment_code" = "treatment_h"."treatment_code" and
+													"treatment_h"."treatment_Code" = "treatment_price"."treatment_code" and
+													"treatment_price"."effective_date" in
+													(
+				
+														select max("tp"."effective_date")
+														from "treatment_price" as "tp"
+														where "tp"."treatment_Code" = "treatment_price"."treatment_code"
+													) and
+													"product_treatment"."product_id" = prep_manf.product_id  and
+													product_treatment.texture_treatment = 'N' and
+													"prep_treatment"."treatment_Code" = "treatment_h"."treatment_code" and
+													"prep_treatment"."treatment_Code" in ('L120', 'L121','L120B','L134') and
+													"prep_treatment"."prep_id" = "prep"."prep_id" and
+													"prep_treatment"."quote_no" = used_quote
+									),
+									0
+						
+
+							  )
+
+				) 
+
+			 )as base_cost_new ,
+
+			 (
+				(if is_myexclusive = 'Y' then myexclusive_price else  base_cost_new  endif) + 
+				"prep_manf"."treatment_cost" +  
+				(
+							select sum("treatment_price"."unit_price")
+							from "product_treatment", "treatment_h", "treatment_price"
+							where 	"product_treatment"."treatment_code" = "treatment_h"."treatment_code" and
+										"treatment_h"."treatment_Code" = "treatment_price"."treatment_code" and
+										"treatment_price"."effective_date" in
+											(
+				
+												select max("tp"."effective_date")
+												from "treatment_price" as "tp"
+												where "tp"."treatment_Code" = "treatment_price"."treatment_code"
+											) and
+										"product_treatment"."product_id" = product.product_id  and
+										product_treatment.texture_treatment = 'N' and
+										3 = 3
+				) +
+
+
+				"prep_manf"."cover_hardware_cost" 
+
+			 ) as total_new ,
+		
+		    (
+					((if is_myexclusive = 'Y' then myexclusive_price else  base_cost_new  endif)  * dealer_discount_factor ) + 
+				dbf_get_treatment_cost_of_job("prep"."prep_id", used_quote ) +	
+				(
+						(
+							select sum("treatment_price"."unit_price")
+							from "product_treatment", "treatment_h", "treatment_price"
+							where 	"product_treatment"."treatment_code" = "treatment_h"."treatment_code" and
+										"treatment_h"."treatment_Code" = "treatment_price"."treatment_code" and
+										"treatment_price"."effective_date" in
+											(
+				
+												select max("tp"."effective_date")
+												from "treatment_price" as "tp"
+												where "tp"."treatment_Code" = "treatment_price"."treatment_code"
+											) and
+										"product_treatment"."product_id" = product.product_id and
+										product_treatment.texture_treatment = 'N' and
+										3 = 3
+						) * dealer_discount_factor
+
+				)  +
+			   ("prep_manf"."cover_hardware_cost" * dealer_discount_factor) 
+
+
+			 ) as net_new ,
+			
+			
+
+			(
+				if ( wallbottom || '_emboss' )  = wallbottom_quote     then
+					if is_pearlessence_embossed = 0 then
+						1
+					else
+						0
+					endif
+						
+				else
+						1
+				endif
+		   ) as showme ,
+			("prep_manf"."liner_wall_thickness" || "prep_manf"."liner_bottom_thickness") as wallbottom ,
+			'2020_emboss' as wallbottom_quote,
+			 prep_manf.sqft ,
+			prep_manf.sales_tax ,
+			product.description ,
+			(
+				''
+
+
+			) as new_product_description ,
+
+			(	Select count (*) 
+				from "prep_rules" 
+				where ( "prep_rules"."prep_id" = prep.prep_id ) and 
+						( "prep_rules"."type" = 'List' ) and 
+						( "prep_rules"."active" = 'Y' )) as list_only ,
+			'Wall: 20 mil - Bottom: 20 mil' as quote_type ,
+			'10' as letter_quote ,
+			(
+				select  count(*)
+				from "prep_treatment" , "prep_manf" as "pm"
+				where "prep_treatment"."prep_id" = "prep"."prep_id" and
+						"prep_treatment"."treatment_Code" = 'L134' and
+						prep_treatment.quote_no <> used_quote and
+						"pm".prep_id = prep_treatment.prep_id and
+						"pm".quote_no = prep_treatment.quote_no and
+						pm.liner_wall_thickness  = 20 and liner_bottom_thickness = 20
+			) as present ,
+			product.wall_thickness_allowed, 
+			product.bottom_thickness_allowed ,
+			(
+				select min(pm.quote_no)
+				from prep_manf as pm
+				where pm.prep_id = prep.prep_id and
+						pm.status > 0
+			) as used_quote,
+			product.product_id ,
+
+			(
+				select count(*)
+				from product_treatment, product as p
+				where product_treatment.product_id = p.product_id and
+						product_treatment.treatment_code  in ( 'L134') and
+						product_treatment.texture_treatment = 'N' and
+						product_treatment.active = 'Y' and
+						product_treatment.product_id =  product.product_id
+			) as is_pearlessence_embossed ,
+
+			(
+				select warranty_Header.liner_extended_warranty
+				from warranty_header
+				where
+						(
+							(prep.prep_type = 'E' and prep.prep_id = warranty_header.prep_id) or
+							(prep.prep_type = 'O' and prep.order_no = warranty_header.order_no) 
+						)
+			) as lew,
+
+			(
+				select warranty_Header.liner_extended_warranty_type
+				from warranty_header
+				where
+						(
+							(prep.prep_type = 'E' and prep.prep_id = warranty_header.prep_id) or
+							(prep.prep_type = 'O' and prep.order_no = warranty_header.order_no) 
+						)
+			) as lew_type ,
+
+			(
+				select max(coalesce(warranty_header.lew_amount,0))
+				from warranty_Header
+				where (
+							(prep.prep_type = 'E' and prep.prep_id = warranty_header.prep_id) or
+							(prep.prep_type = 'O' and prep.order_no = warranty_header.order_no) 
+						)
+
+			) as lewamount 
+				
+    FROM "prep",   
+         "prep_manf" ,
+			"product" 
+   WHERE ( "prep"."prep_id" = "prep_manf"."prep_id" ) AND  
+         ( "prep_manf"."quote_no" = used_quote ) AND  
+         ( "prep"."type" = 'LN' ) AND  
+         ( "prep_manf"."product_group" = 'C' )    and
+			prep.prep_id = :al_prep_id and
+			prep_manf.base_cost > 0 and
+			prep_manf.status > 0 and
+			1544 = product.product_id and
+			showme = 1 and
+			present = 0  and
+			is_myexclusive = 'N'and
+			1000 = 100 AND
+			(
+				(is_pearlessence_embossed = 0 ) or
+				(
+					(
+						select count(*)
+						from product as p
+						where (p.wall_thickness_allowed = 'A' or p.wall_thickness_allowed = '20' ) and
+								(p.bottom_thickness_allowed = 'A' or p.bottom_thickness_allowed = '20') and
+								(p.product_id = prep_manf.product_id )
+					) > 0
+				)
+
+			)
+
+UNION
+
+  SELECT "prep"."prep_id",   
+         "prep_manf"."base_cost",   
+         "prep_manf"."treatment_cost",   
+         "prep_manf"."cover_hardware_cost",  
+			prep_manf.cover_net, 
+         "prep_manf"."other_list",   
+         "prep_manf"."other_net",   
+         "prep_manf"."markdown",   
+         "prep_manf"."liner_wall_thickness",   
+         "prep_manf"."liner_bottom_thickness",   
+         "prep_manf"."shape" ,
+			"prep_manf"."dealer_discount",
+			f_Effective_Discount("prep_manf"."dealer_discount") as dealer_discount_factor,
+
+			dbf_is_myexclusive(prep_manf.prep_id, prep_manf.quote_no) as is_myexclusive,
+
+			(if is_myexclusive = 'Y' then
+				f_get_price(1185,prep_manf.grid_size,prep_manf.sqft,prep_manf.shape) * prep_manf.sqft 
+			else
+				0
+			endif) as myexclusive_price,
+
+
+			f_get_discount_for_liners(prep_manf.prep_id, prep_manf.quote_no, "prep_manf"."liner_wall_thickness","prep_manf"."liner_bottom_thickness") as liner_upcharge,
+
+			(if prep_manf.shape = 'FF' and 3 = 4 then
+				(    ("prep_manf"."base_cost" / 1.15 ) / (1 + liner_upcharge      )   )
+			 else
+				(    ("prep_manf"."base_cost") / (1 + liner_upcharge      )   )
+			 endif) as base_cost_raw ,
+			 f_get_discount_for_liners(prep_manf.prep_id, prep_manf.quote_no, 28,20)  liner_upcharge_new ,
+
+			 (
+			 	(if prep_manf.shape = 'FF' and 3 = 4 then
+					(base_cost_raw * (1 + liner_upcharge_new) )  * 1.15
+			 	 else
+					(base_cost_raw * (1 + liner_upcharge_new) )
+			 	 endif) 
+				 -
+
+				 (
+					coalesce(
+									(
+										select sum("treatment_price"."unit_price")
+										from "product_treatment", "treatment_h", "treatment_price", "prep_treatment"
+										where 	"product_treatment"."treatment_code" = "treatment_h"."treatment_code" and
+													"treatment_h"."treatment_Code" = "treatment_price"."treatment_code" and
+													"treatment_price"."effective_date" in
+													(
+				
+														select max("tp"."effective_date")
+														from "treatment_price" as "tp"
+														where "tp"."treatment_Code" = "treatment_price"."treatment_code"
+													) and
+													"product_treatment"."product_id" = prep_manf.product_id  and
+													product_treatment.texture_treatment = 'N' and
+													"prep_treatment"."treatment_Code" = "treatment_h"."treatment_code" and
+													"prep_treatment"."treatment_Code" in ('L120', 'L121','L120B','L134') and
+													"prep_treatment"."prep_id" = "prep"."prep_id" and
+													"prep_treatment"."quote_no" = used_quote
+									),
+									0
+						
+
+							  )
+
+				 )
+
+			 )as base_cost_new ,
+
+			 (
+				(if is_myexclusive = 'Y' then myexclusive_price else  base_cost_new  endif) + 
+				"prep_manf"."treatment_cost" +  
+				(
+							select sum("treatment_price"."unit_price")
+							from "product_treatment", "treatment_h", "treatment_price"
+							where 	"product_treatment"."treatment_code" = "treatment_h"."treatment_code" and
+										"treatment_h"."treatment_Code" = "treatment_price"."treatment_code" and
+										"treatment_price"."effective_date" in
+											(
+				
+												select max("tp"."effective_date")
+												from "treatment_price" as "tp"
+												where "tp"."treatment_Code" = "treatment_price"."treatment_code"
+											) and
+										"product_treatment"."product_id" = product.product_id  and
+										product_treatment.texture_treatment = 'N' and
+										3 = 3
+				) +
+
+				"prep_manf"."cover_hardware_cost" 
+			 ) as total_new ,
+		
+		    (
+					((if is_myexclusive = 'Y' then myexclusive_price else  base_cost_new  endif)  * dealer_discount_factor ) + 
+				dbf_get_treatment_cost_of_job("prep"."prep_id", used_quote ) +	
+				(
+						(
+							select sum("treatment_price"."unit_price")
+							from "product_treatment", "treatment_h", "treatment_price"
+							where 	"product_treatment"."treatment_code" = "treatment_h"."treatment_code" and
+										"treatment_h"."treatment_Code" = "treatment_price"."treatment_code" and
+										"treatment_price"."effective_date" in
+											(
+				
+												select max("tp"."effective_date")
+												from "treatment_price" as "tp"
+												where "tp"."treatment_Code" = "treatment_price"."treatment_code"
+											) and
+										"product_treatment"."product_id" = product.product_id  and
+										product_treatment.texture_treatment = 'N' and
+										3 = 3
+						) * dealer_discount_factor
+
+				)  +
+			   ("prep_manf"."cover_hardware_cost" * dealer_discount_factor) 
+
+           ) as net_new ,
+			
+			
+
+			(
+				if ( wallbottom  || '_emboss' ) = wallbottom_quote     then
+					if is_pearlessence_embossed = 0 then
+						1
+					else
+						0
+					endif
+						
+				else
+						1
+				endif
+		   ) as showme ,
+			("prep_manf"."liner_wall_thickness" || "prep_manf"."liner_bottom_thickness") as wallbottom ,
+			'2820_emboss' as wallbottom_quote,
+			 prep_manf.sqft ,
+			prep_manf.sales_tax ,
+			product.description ,
+			(
+				''
+
+
+			) as new_product_description ,
+
+			(	Select count (*) 
+				from "prep_rules" 
+				where ( "prep_rules"."prep_id" = prep.prep_id ) and 
+						( "prep_rules"."type" = 'List' ) and 
+						( "prep_rules"."active" = 'Y' )) as list_only ,
+			'Wall: 28 mil - Bottom: 20 mil' as quote_type ,
+			'11' as letter_quote ,
+			(
+				select  count(*)
+				from "prep_treatment" , "prep_manf" as "pm"
+				where "prep_treatment"."prep_id" = "prep"."prep_id" and
+						"prep_treatment"."treatment_Code" = 'L134' and
+						prep_treatment.quote_no <> used_quote and
+						"pm".prep_id = prep_treatment.prep_id and
+						"pm".quote_no = prep_treatment.quote_no and
+						pm.liner_wall_thickness  = 28 and liner_bottom_thickness = 20
+			) as present ,
+			product.wall_thickness_allowed, 
+			product.bottom_thickness_allowed ,
+			(
+				select min(pm.quote_no)
+				from prep_manf as pm
+				where pm.prep_id = prep.prep_id and
+						pm.status > 0
+			) as used_quote,
+			product.product_id ,
+
+			(
+				select count(*)
+				from product_treatment, product as p
+				where product_treatment.product_id = p.product_id and
+						product_treatment.treatment_code  in ('L134') and
+						product_treatment.texture_treatment = 'N' and
+						product_treatment.active = 'Y' and
+						product_treatment.product_id =  prep_manf.product_id
+			) as is_pearlessence_embossed ,
+
+			(
+				select warranty_Header.liner_extended_warranty
+				from warranty_header
+				where
+						(
+							(prep.prep_type = 'E' and prep.prep_id = warranty_header.prep_id) or
+							(prep.prep_type = 'O' and prep.order_no = warranty_header.order_no) 
+						)
+			) as lew,
+
+			(
+				select warranty_Header.liner_extended_warranty_type
+				from warranty_header
+				where
+						(
+							(prep.prep_type = 'E' and prep.prep_id = warranty_header.prep_id) or
+							(prep.prep_type = 'O' and prep.order_no = warranty_header.order_no) 
+						)
+			) as lew_type ,
+
+			(
+				select max(coalesce(warranty_header.lew_amount,0))
+				from warranty_Header
+				where (
+							(prep.prep_type = 'E' and prep.prep_id = warranty_header.prep_id) or
+							(prep.prep_type = 'O' and prep.order_no = warranty_header.order_no) 
+						)
+
+			) as lewamount 
+				
+    FROM "prep",   
+         "prep_manf" ,
+			"product" 
+   WHERE ( "prep"."prep_id" = "prep_manf"."prep_id" ) AND  
+         ( "prep_manf"."quote_no" = used_quote ) AND  
+         ( "prep"."type" = 'LN' ) AND  
+         ( "prep_manf"."product_group" = 'C' )    and
+			prep.prep_id = :al_prep_id and
+			prep_manf.base_cost > 0 and
+			prep_manf.status > 0 and
+			1544 = product.product_id and
+			showme = 1 and
+			present = 0  and
+			is_myexclusive = 'N' and
+			1 = 2 and
+
+			
+			(
+				(is_pearlessence_embossed = 0 ) or
+				(
+					(
+						select count(*)
+						from product as p
+						where (p.wall_thickness_allowed = 'A' or p.wall_thickness_allowed = '28' ) and
+								(p.bottom_thickness_allowed = 'A' or p.bottom_thickness_allowed = '20') and
+								(p.product_id = prep_manf.product_id )
+					) > 0
+				)
+
+			) 
+
+ 
+UNION
+
+  SELECT "prep"."prep_id",   
+         "prep_manf"."base_cost",   
+         "prep_manf"."treatment_cost",   
+         "prep_manf"."cover_hardware_cost",  
+			prep_manf.cover_net, 
+         "prep_manf"."other_list",   
+         "prep_manf"."other_net",   
+         "prep_manf"."markdown",   
+         "prep_manf"."liner_wall_thickness",   
+         "prep_manf"."liner_bottom_thickness",   
+         "prep_manf"."shape" ,
+			"prep_manf"."dealer_discount",
+			f_Effective_Discount("prep_manf"."dealer_discount") as dealer_discount_factor,
+
+			dbf_is_myexclusive(prep_manf.prep_id, prep_manf.quote_no) as is_myexclusive,
+
+			(if is_myexclusive = 'Y' then
+				f_get_price(1185,prep_manf.grid_size,prep_manf.sqft,prep_manf.shape) * prep_manf.sqft 
+			else
+				0
+			endif) as myexclusive_price,
+
+
+			f_get_discount_for_liners(prep_manf.prep_id, prep_manf.quote_no, "prep_manf"."liner_wall_thickness","prep_manf"."liner_bottom_thickness") as liner_upcharge,
+
+			(if prep_manf.shape = 'FF' and 3 = 4 then
+				(    ("prep_manf"."base_cost" / 1.15 ) / (1 + liner_upcharge      )   )
+			 else
+				(    ("prep_manf"."base_cost") / (1 + liner_upcharge      )   )
+			 endif) as base_cost_raw ,
+			 f_get_discount_for_liners(prep_manf.prep_id, prep_manf.quote_no, 28,28)  liner_upcharge_new ,
+
+			 (
+			 	(if prep_manf.shape = 'FF' and 3 = 4  then
+					(base_cost_raw * (1 + liner_upcharge_new) )  * 1.15
+			 	 else
+						(base_cost_raw * (1 + liner_upcharge_new) )
+			 	 endif)
+			
+				-
+
+				(
+					coalesce(
+									(
+										select coalesce(sum("treatment_price"."unit_price"),0)
+										from "product_treatment", "treatment_h", "treatment_price", "prep_treatment"
+										where 	"product_treatment"."treatment_code" = "treatment_h"."treatment_code" and
+													"treatment_h"."treatment_Code" = "treatment_price"."treatment_code" and
+													"treatment_price"."effective_date" in
+													(
+				
+														select max("tp"."effective_date")
+														from "treatment_price" as "tp"
+														where "tp"."treatment_Code" = "treatment_price"."treatment_code"
+													) and
+													"product_treatment"."product_id" = prep_manf.product_id  and
+													product_treatment.texture_treatment = 'N' and
+													
+													"prep_treatment"."treatment_Code" = "treatment_h"."treatment_code" and
+													"prep_treatment"."treatment_Code" in ('L120', 'L121','L120B','L134') and
+													"prep_treatment"."prep_id" = "prep"."prep_id" and
+													"prep_treatment"."quote_no" = used_quote
+									),
+									0
+						
+
+							  )
+
+				) 
+
+			 )as base_cost_new ,
+
+			 (
+				(if is_myexclusive = 'Y' then myexclusive_price else  base_cost_new  endif) + 
+				( 
+					(	
+						"prep_manf"."treatment_cost"  -
+						(
+							(
+								select sum( prep_treatment.quantity  * prep_treatment.unit_price )
+								from treatment_h, prep_treatment
+								where 
+										(prep_treatment.treatment_code = "treatment_h"."treatment_Code" ) and
+										(treatment_h.description like 'Liner: Tex Tread:%') and 
+										"prep_treatment"."prep_id" = "prep"."prep_id" and
+										"prep_treatment"."quote_no" = used_quote 
+							)
+						)
+					)
+
+				)+  
+				(
+							select sum("treatment_price"."unit_price")
+							from "product_treatment", "treatment_h", "treatment_price"
+							where 	"product_treatment"."treatment_code" = "treatment_h"."treatment_code" and
+										"treatment_h"."treatment_Code" = "treatment_price"."treatment_code" and
+										"treatment_price"."effective_date" in
+											(
+				
+												select max("tp"."effective_date")
+												from "treatment_price" as "tp"
+												where "tp"."treatment_Code" = "treatment_price"."treatment_code"
+											) and
+										"product_treatment"."product_id" = product.product_id  and
+										product_treatment.texture_treatment = 'N' and
+										3 = 3
+				) +
+
+
+				"prep_manf"."cover_hardware_cost" ) 
+			 as total_new ,
+		
+		    (
+					((if is_myexclusive = 'Y' then myexclusive_price else  base_cost_new  endif)  * dealer_discount_factor ) + 
+				dbf_get_treatment_cost_of_job_liner_embossed_pearl("prep"."prep_id",used_quote,'EMBOSSED'  ) +	
+				(
+						(
+							select sum("treatment_price"."unit_price")
+							from "product_treatment", "treatment_h", "treatment_price"
+							where 	"product_treatment"."treatment_code" = "treatment_h"."treatment_code" and
+										"treatment_h"."treatment_Code" = "treatment_price"."treatment_code" and
+										"treatment_price"."effective_date" in
+											(
+				
+												select max("tp"."effective_date")
+												from "treatment_price" as "tp"
+												where "tp"."treatment_Code" = "treatment_price"."treatment_code"
+											) and
+										"product_treatment"."product_id" = product.product_id  and
+										product_treatment.texture_treatment = 'N' and
+										3 = 3
+						) * dealer_discount_factor
+
+				)  +
+			   ("prep_manf"."cover_hardware_cost" * dealer_discount_factor) 
+
+			) as net_new ,
+			
+			
+
+			(
+				if ( wallbottom || '_emboss' )  = wallbottom_quote     then
+					if is_pearlessence_embossed = 0 then
+						1
+					else
+						0
+					endif
+						
+				else
+						1
+				endif
+		   ) as showme ,
+			("prep_manf"."liner_wall_thickness" || "prep_manf"."liner_bottom_thickness") as wallbottom ,
+			'2828_emboss' as wallbottom_quote, 
+			 prep_manf.sqft ,
+			prep_manf.sales_tax ,
+			product.description ,
+			(
+				''
+
+
+			) as new_product_description ,
+
+			(	Select count (*) 
+				from "prep_rules" 
+				where ( "prep_rules"."prep_id" = prep.prep_id ) and 
+						( "prep_rules"."type" = 'List' ) and 
+						( "prep_rules"."active" = 'Y' )) as list_only ,
+			'Wall: 28 mil - Bottom: 28 mil' as quote_type ,
+			'12' as letter_quote ,
+			(
+				select  count(*)
+				from "prep_treatment" , "prep_manf" as "pm"
+				where "prep_treatment"."prep_id" = "prep"."prep_id" and
+						"prep_treatment"."treatment_Code" = 'L134'  and
+						prep_treatment.quote_no <> used_quote and
+						"pm".prep_id = prep_treatment.prep_id and
+						"pm".quote_no = prep_treatment.quote_no and
+						pm.liner_wall_thickness  = 28 and liner_bottom_thickness = 28
+			) as present ,
+			product.wall_thickness_allowed, 
+			product.bottom_thickness_allowed ,
+			(
+				select min(pm.quote_no)
+				from prep_manf as pm
+				where pm.prep_id = prep.prep_id and
+						pm.status > 0
+			) as used_quote,
+			product.product_id ,
+
+			(
+				select count(*)
+				from product_treatment, product as p
+				where product_treatment.product_id = p.product_id and
+						product_treatment.treatment_code  in ('L134') and
+						product_treatment.texture_treatment = 'N' and
+						product_treatment.active = 'Y' and
+						product_treatment.product_id =  prep_manf.product_id
+			) as is_pearlessence_embossed ,
+
+			(
+				select warranty_Header.liner_extended_warranty
+				from warranty_header
+				where
+						(
+							(prep.prep_type = 'E' and prep.prep_id = warranty_header.prep_id) or
+							(prep.prep_type = 'O' and prep.order_no = warranty_header.order_no) 
+						)
+			) as lew,
+
+			(
+				select warranty_Header.liner_extended_warranty_type
+				from warranty_header
+				where
+						(
+							(prep.prep_type = 'E' and prep.prep_id = warranty_header.prep_id) or
+							(prep.prep_type = 'O' and prep.order_no = warranty_header.order_no) 
+						)
+			) as lew_type ,
+
+			(
+				select max(coalesce(warranty_header.lew_amount,0))
+				from warranty_Header
+				where (
+							(prep.prep_type = 'E' and prep.prep_id = warranty_header.prep_id) or
+							(prep.prep_type = 'O' and prep.order_no = warranty_header.order_no) 
+						)
+
+			) as lewamount 
+				
+    FROM "prep",   
+         "prep_manf" ,
+			"product" 
+   WHERE ( "prep"."prep_id" = "prep_manf"."prep_id" ) AND  
+         ( "prep_manf"."quote_no" = used_quote ) AND  
+         ( "prep"."type" = 'LN' ) AND  
+         ( "prep_manf"."product_group" = 'C' )    and
+			prep.prep_id = :al_prep_id and
+			prep_manf.base_cost > 0 and
+			prep_manf.status > 0 and
+			1544 = product.product_id and
+			showme = 1 and
+			present = 0  and
+			is_myexclusive = 'N' and
+			
+			(
+				(is_pearlessence_embossed = 0 ) or
+				(
+					(
+						select count(*)
+						from product as p
+						where (p.wall_thickness_allowed = 'A' or p.wall_thickness_allowed = '28' ) and
+								(p.bottom_thickness_allowed = 'A' or p.bottom_thickness_allowed = '28') and
+								(p.product_id = prep_manf.product_id )
+					) > 0
+				)
+
+			) 
+
+UNION
+
+  SELECT "prep"."prep_id",   
+         "prep_manf"."base_cost",   
+         "prep_manf"."treatment_cost",   
+         "prep_manf"."cover_hardware_cost",  
+			prep_manf.cover_net, 
+         "prep_manf"."other_list",   
+         "prep_manf"."other_net",   
+         "prep_manf"."markdown",   
+         "prep_manf"."liner_wall_thickness",   
+         "prep_manf"."liner_bottom_thickness",   
+         "prep_manf"."shape" ,
+			"prep_manf"."dealer_discount",
+			f_Effective_Discount("prep_manf"."dealer_discount") as dealer_discount_factor,
+
+			dbf_is_myexclusive(prep_manf.prep_id, prep_manf.quote_no) as is_myexclusive,
+
+			(if is_myexclusive = 'Y' then
+				f_get_price(1185,prep_manf.grid_size,prep_manf.sqft,prep_manf.shape) * prep_manf.sqft 
+			else
+				0
+			endif) as myexclusive_price,
+
+
+			f_get_discount_for_liners(prep_manf.prep_id, prep_manf.quote_no, "prep_manf"."liner_wall_thickness","prep_manf"."liner_bottom_thickness") as liner_upcharge,
+
+			(if prep_manf.shape = 'FF'  and 3 = 4 then
+				(    ("prep_manf"."base_cost" / 1.15 ) / (1 + liner_upcharge      )   )
+			 else
+				(    ("prep_manf"."base_cost") / (1 + liner_upcharge      )   )
+			 endif) as base_cost_raw ,
+			 f_get_discount_for_liners(prep_manf.prep_id, prep_manf.quote_no, 20,28)  liner_upcharge_new ,
+
+			 (
+			 	(if prep_manf.shape = 'FF' and 3 = 4  then
+						(base_cost_raw * (1 + liner_upcharge_new) )  * 1.15
+			 	 else
+						(base_cost_raw * (1 + liner_upcharge_new) )
+			 	 endif)
+
+				-
+
+				(
+					coalesce(
+									(
+										select sum("treatment_price"."unit_price")
+										from "product_treatment", "treatment_h", "treatment_price", "prep_treatment"
+										where 	"product_treatment"."treatment_code" = "treatment_h"."treatment_code" and
+													"treatment_h"."treatment_Code" = "treatment_price"."treatment_code" and
+													"treatment_price"."effective_date" in
+													(
+				
+														select max("tp"."effective_date")
+														from "treatment_price" as "tp"
+														where "tp"."treatment_Code" = "treatment_price"."treatment_code"
+													) and
+													"product_treatment"."product_id" = prep_manf.product_id  and
+													product_treatment.texture_treatment = 'N' and
+													"prep_treatment"."treatment_Code" = "treatment_h"."treatment_code" and
+													"prep_treatment"."treatment_Code" in ('L120', 'L121','L120B','L134') and
+													"prep_treatment"."prep_id" = "prep"."prep_id" and
+													"prep_treatment"."quote_no" = used_quote
+									),
+									0
+						
+
+							  )
+
+				) 
+
+			 )as base_cost_new ,
+
+			 (
+				(if is_myexclusive = 'Y' then myexclusive_price else  base_cost_new  endif) + 
+				"prep_manf"."treatment_cost" +  
+				(
+							select sum("treatment_price"."unit_price")
+							from "product_treatment", "treatment_h", "treatment_price"
+							where 	"product_treatment"."treatment_code" = "treatment_h"."treatment_code" and
+										"treatment_h"."treatment_Code" = "treatment_price"."treatment_code" and
+										"treatment_price"."effective_date" in
+											(
+				
+												select max("tp"."effective_date")
+												from "treatment_price" as "tp"
+												where "tp"."treatment_Code" = "treatment_price"."treatment_code"
+											) and
+										"product_treatment"."product_id" = product.product_id  and
+										product_treatment.texture_treatment = 'N' and
+										3 = 3
+			   ) +
+
+				"prep_manf"."cover_hardware_cost" 
+			 ) as total_new ,
+		
+		    (
+				((if is_myexclusive = 'Y' then myexclusive_price else  base_cost_new  endif)  * dealer_discount_factor ) + 
+				dbf_get_treatment_cost_of_job("prep"."prep_id", used_quote ) +	
+				(
+						(
+							select sum("treatment_price"."unit_price")
+							from "product_treatment", "treatment_h", "treatment_price"
+							where 	"product_treatment"."treatment_code" = "treatment_h"."treatment_code" and
+										"treatment_h"."treatment_Code" = "treatment_price"."treatment_code" and
+										"treatment_price"."effective_date" in
+											(
+				
+												select max("tp"."effective_date")
+												from "treatment_price" as "tp"
+												where "tp"."treatment_Code" = "treatment_price"."treatment_code"
+											) and
+										"product_treatment"."product_id" = product.product_id  and
+										product_treatment.texture_treatment = 'N' and
+										3 = 3
+						) * dealer_discount_factor
+
+				)  +
+			   ("prep_manf"."cover_hardware_cost" * dealer_discount_factor) 
+
+			) as net_new ,
+			
+			
+
+			(
+				if ( wallbottom || '_emboss' ) = wallbottom_quote     then
+					if is_pearlessence_embossed = 0 then
+						1
+					else
+						0
+					endif
+						
+				else
+						1
+				endif
+		   ) as showme ,
+			("prep_manf"."liner_wall_thickness" || "prep_manf"."liner_bottom_thickness") as wallbottom ,
+			'2028_emboss' as wallbottom_quote,
+			 prep_manf.sqft ,
+			prep_manf.sales_tax ,
+			product.description ,
+			(
+				''
+
+
+			) as new_product_description ,
+
+			(	Select count (*) 
+				from "prep_rules" 
+				where ( "prep_rules"."prep_id" = prep.prep_id ) and 
+						( "prep_rules"."type" = 'List' ) and 
+						( "prep_rules"."active" = 'Y' )) as list_only ,
+			'Wall: 20 mil - Bottom: 28 mil' as quote_type ,
+			'13' as letter_quote ,
+			(
+				select  count(*)
+				from "prep_treatment" , "prep_manf" as "pm"
+				where "prep_treatment"."prep_id" = "prep"."prep_id" and
+						"prep_treatment"."treatment_Code" = 'L134' and
+						prep_treatment.quote_no <> used_quote and
+						"pm".prep_id = prep_treatment.prep_id and
+						"pm".quote_no = prep_treatment.quote_no and
+						pm.liner_wall_thickness  = 20 and liner_bottom_thickness = 28
+			) as present ,
+			product.wall_thickness_allowed, 
+			product.bottom_thickness_allowed ,
+			(
+				select min(pm.quote_no)
+				from prep_manf as pm
+				where pm.prep_id = prep.prep_id and
+						pm.status > 0
+			) as used_quote,
+			product.product_id ,
+
+			(
+				select count(*)
+				from product_treatment, product as p
+				where product_treatment.product_id = p.product_id and
+						product_treatment.treatment_code  in ( 'L134') and
+						product_treatment.texture_treatment = 'N' and
+						product_treatment.active = 'Y' and
+						product_treatment.product_id =  prep_manf.product_id
+			) as is_pearlessence_embossed ,
+
+			(
+				select warranty_Header.liner_extended_warranty
+				from warranty_header
+				where
+						(
+							(prep.prep_type = 'E' and prep.prep_id = warranty_header.prep_id) or
+							(prep.prep_type = 'O' and prep.order_no = warranty_header.order_no) 
+						)
+			) as lew,
+
+			(
+				select warranty_Header.liner_extended_warranty_type
+				from warranty_header
+				where
+						(
+							(prep.prep_type = 'E' and prep.prep_id = warranty_header.prep_id) or
+							(prep.prep_type = 'O' and prep.order_no = warranty_header.order_no) 
+						)
+			) as lew_type ,
+
+			(
+				select max(coalesce(warranty_header.lew_amount,0))
+				from warranty_Header
+				where (
+							(prep.prep_type = 'E' and prep.prep_id = warranty_header.prep_id) or
+							(prep.prep_type = 'O' and prep.order_no = warranty_header.order_no) 
+						)
+
+			) as lewamount 
+				
+    FROM "prep",   
+         "prep_manf" ,
+			"product" 
+   WHERE ( "prep"."prep_id" = "prep_manf"."prep_id" ) AND  
+         ( "prep_manf"."quote_no" = used_quote ) AND  
+         ( "prep"."type" = 'LN' ) AND  
+         ( "prep_manf"."product_group" = 'C' )    and
+			prep.prep_id = :al_prep_id and
+			prep_manf.base_cost > 0 and
+			prep_manf.status > 0 and
+			1544 = product.product_id and
+			showme = 1 and
+			present = 0  and
+			is_myexclusive = 'N' and
+			1 = 2  and
+	
+
+			
+			(
+				(is_pearlessence_embossed = 0 ) or
+				(
+					(
+						select count(*)
+						from product as p
+						where (p.wall_thickness_allowed = 'A' or p.wall_thickness_allowed = '20' ) and
+								(p.bottom_thickness_allowed = 'A' or p.bottom_thickness_allowed = '28') and
+								(p.product_id = prep_manf.product_id )
+					) > 0
+				)
+ 
+
+			) 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+UNION
+
+  SELECT "prep"."prep_id",   
+         "prep_manf"."base_cost",   
+         "prep_manf"."treatment_cost",   
+         "prep_manf"."cover_hardware_cost",  
+			prep_manf.cover_net, 
+         "prep_manf"."other_list",   
+         "prep_manf"."other_net",   
+         "prep_manf"."markdown",   
+         "prep_manf"."liner_wall_thickness",   
+         "prep_manf"."liner_bottom_thickness",   
+         "prep_manf"."shape" ,
+			"prep_manf"."dealer_discount",
+			f_Effective_Discount("prep_manf"."dealer_discount") as dealer_discount_factor,
+
+			dbf_is_myexclusive(prep_manf.prep_id, prep_manf.quote_no) as is_myexclusive,
+
+			(if is_myexclusive = 'Y' then
+				f_get_price(1185,prep_manf.grid_size,prep_manf.sqft,prep_manf.shape) * prep_manf.sqft 
+			else
+				0
+			endif) as myexclusive_price,
+
+
+			f_get_discount_for_liners(prep_manf.prep_id, prep_manf.quote_no, "prep_manf"."liner_wall_thickness","prep_manf"."liner_bottom_thickness") as liner_upcharge,
+
+			(if prep_manf.shape = 'FF' and 3 = 4 then
+				(    ("prep_manf"."base_cost" / 1.15 ) / (1 + liner_upcharge      )   )
+			 else
+				(    ("prep_manf"."base_cost") / (1 + liner_upcharge      )   )
+			 endif) as base_cost_raw ,
+			 f_get_discount_for_liners(prep_manf.prep_id, prep_manf.quote_no, 20,20)  liner_upcharge_new ,
+
+			 (
+			 	(if prep_manf.shape = 'FF' and 3 = 4  then
+					(base_cost_raw * (1 + liner_upcharge_new) )  * 1.15
+			 	 else
+					(base_cost_raw * (1 + liner_upcharge_new) )
+			 	 endif)
+
+				-
+
+				(
+					coalesce(
+									(
+										select sum("treatment_price"."unit_price")
+										from "product_treatment", "treatment_h", "treatment_price","prep_treatment"
+										where 	"product_treatment"."treatment_code" = "treatment_h"."treatment_code" and
+													"treatment_h"."treatment_Code" = "treatment_price"."treatment_code" and
+													"treatment_price"."effective_date" in
+													(
+				
+														select max("tp"."effective_date")
+														from "treatment_price" as "tp"
+														where "tp"."treatment_Code" = "treatment_price"."treatment_code"
+													) and
+													"product_treatment"."product_id" = prep_manf.product_id  and
+													product_treatment.texture_treatment = 'N' and
+													
+													"prep_treatment"."treatment_Code" = "treatment_h"."treatment_code" and
+													"prep_treatment"."treatment_Code" in ('L120', 'L121','L120B','L134') and
+													"prep_treatment"."prep_id" = "prep"."prep_id" and
+													"prep_treatment"."quote_no" = used_quote
+									),
+									0
+						
+
+							  )
+
+				) 
+
+			 )as base_cost_new ,
+
+			 (
+				(if is_myexclusive = 'Y' then myexclusive_price else  base_cost_new  endif) + 
+				 "prep_manf"."treatment_cost" +  
+				(
+							select sum("treatment_price"."unit_price")
+							from "product_treatment", "treatment_h", "treatment_price"
+							where 	"product_treatment"."treatment_code" = "treatment_h"."treatment_code" and
+										"treatment_h"."treatment_Code" = "treatment_price"."treatment_code" and
+										"treatment_price"."effective_date" in
+											(
+				
+												select max("tp"."effective_date")
+												from "treatment_price" as "tp"
+												where "tp"."treatment_Code" = "treatment_price"."treatment_code"
+											) and
+										"product_treatment"."product_id" = product.product_id  and
+										product_treatment.texture_treatment = 'N' and
+										"product_treatment"."product_id" = prep_manf.product_id and
+										product_treatment.texture_treatment = 'N'  
+				) +
+
+
+			   "prep_manf"."cover_hardware_cost" 
+			 ) as total_new ,
+		
+		    (
+				((if is_myexclusive = 'Y' then myexclusive_price else  base_cost_new  endif)  * dealer_discount_factor ) + 
+				dbf_get_treatment_cost_of_job("prep"."prep_id", used_quote ) +	
+				(
+						(
+							select sum("treatment_price"."unit_price")
+							from "product_treatment", "treatment_h", "treatment_price"
+							where 	"product_treatment"."treatment_code" = "treatment_h"."treatment_code" and
+										"treatment_h"."treatment_Code" = "treatment_price"."treatment_code" and
+										"treatment_price"."effective_date" in
+											(
+				
+												select max("tp"."effective_date")
+												from "treatment_price" as "tp"
+												where "tp"."treatment_Code" = "treatment_price"."treatment_code"
+											) and
+										"product_treatment"."product_id" = product.product_id  and
+										product_treatment.texture_treatment = 'N' and
+										3 = 3
+						) * dealer_discount_factor
+
+				)  +
+			   ("prep_manf"."cover_hardware_cost" * dealer_discount_factor) 
+
+			) as net_new ,
+			
+			
+
+			(
+				if ( wallbottom || '_pearl_embossed' ) = wallbottom_quote     then
+					if is_pearlessence_embossed = 0 then
+						1
+					else
+						0
+					endif
+						
+				else
+						1
+				endif
+		   ) as showme ,
+			("prep_manf"."liner_wall_thickness" || "prep_manf"."liner_bottom_thickness") as wallbottom ,
+			'2020_pearl_embossed' as wallbottom_quote,
+			 prep_manf.sqft ,
+			prep_manf.sales_tax ,
+			product.description ,
+			(
+				''
+
+
+			) as new_product_description ,
+
+			(	Select count (*) 
+				from "prep_rules" 
+				where ( "prep_rules"."prep_id" = prep.prep_id ) and 
+						( "prep_rules"."type" = 'List' ) and 
+						( "prep_rules"."active" = 'Y' )) as list_only ,
+			'Wall: 20 mil - Bottom: 20 mil' as quote_type ,
+			'14' as letter_quote ,
+			(
+				select  count(*)
+				from "prep_treatment" , "prep_manf" as "pm"
+				where "prep_treatment"."prep_id" = "prep"."prep_id" and
+						"prep_treatment"."treatment_Code" in  ('L121') and
+						prep_treatment.quote_no <> used_quote and
+						"pm".prep_id = prep_treatment.prep_id and
+						"pm".quote_no = prep_treatment.quote_no and
+						pm.liner_wall_thickness  = 20 and liner_bottom_thickness = 20
+			) as present ,
+			product.wall_thickness_allowed, 
+			product.bottom_thickness_allowed ,
+			(
+				select min(pm.quote_no)
+				from prep_manf as pm
+				where pm.prep_id = prep.prep_id and
+						pm.status > 0
+			) as used_quote,
+			product.product_id ,
+
+			(
+				select count(*)
+				from product_treatment, product as p
+				where product_treatment.product_id = p.product_id and
+						product_treatment.treatment_code  in ( 'L121','L134') and
+						product_treatment.texture_treatment = 'N' and
+						product_treatment.active = 'Y' and
+						product_treatment.product_id =  prep_manf.product_id
+			) as is_pearlessence_embossed ,
+
+			(
+				select warranty_Header.liner_extended_warranty
+				from warranty_header
+				where
+						(
+							(prep.prep_type = 'E' and prep.prep_id = warranty_header.prep_id) or
+							(prep.prep_type = 'O' and prep.order_no = warranty_header.order_no) 
+						)
+			) as lew,
+
+			(
+				select warranty_Header.liner_extended_warranty_type
+				from warranty_header
+				where
+						(
+							(prep.prep_type = 'E' and prep.prep_id = warranty_header.prep_id) or
+							(prep.prep_type = 'O' and prep.order_no = warranty_header.order_no) 
+						)
+			) as lew_type ,
+
+			(
+				select max(coalesce(warranty_header.lew_amount,0))
+				from warranty_Header
+				where (
+							(prep.prep_type = 'E' and prep.prep_id = warranty_header.prep_id) or
+							(prep.prep_type = 'O' and prep.order_no = warranty_header.order_no) 
+						)
+
+			) as lewamount 
+				
+    FROM "prep",   
+         "prep_manf" ,
+			"product" 
+   WHERE ( "prep"."prep_id" = "prep_manf"."prep_id" ) AND  
+         ( "prep_manf"."quote_no" = used_quote ) AND  
+         ( "prep"."type" = 'LN' ) AND  
+         ( "prep_manf"."product_group" = 'C' )    and
+			prep.prep_id = :al_prep_id and
+			prep_manf.base_cost > 0 and
+			prep_manf.status > 0 and
+			1543 = product.product_id and
+			showme = 1 and
+			present = 0  and
+			is_myexclusive = 'N' and
+			1 = 2 AND
+			(
+				(is_pearlessence_embossed = 0 ) or
+				(
+					(
+						select count(*)
+						from product as p
+						where (p.wall_thickness_allowed = 'A' or p.wall_thickness_allowed = '20' ) and
+								(p.bottom_thickness_allowed = 'A' or p.bottom_thickness_allowed = '20') and
+								(p.product_id = prep_manf.product_id )
+					) > 0
+				)
+
+			)
+
+UNION
+
+  SELECT "prep"."prep_id",   
+         "prep_manf"."base_cost",   
+         "prep_manf"."treatment_cost",   
+         "prep_manf"."cover_hardware_cost",  
+			prep_manf.cover_net, 
+         "prep_manf"."other_list",   
+         "prep_manf"."other_net",   
+         "prep_manf"."markdown",   
+         "prep_manf"."liner_wall_thickness",   
+         "prep_manf"."liner_bottom_thickness",   
+         "prep_manf"."shape" ,
+			"prep_manf"."dealer_discount",
+			f_Effective_Discount("prep_manf"."dealer_discount") as dealer_discount_factor,
+
+			dbf_is_myexclusive(prep_manf.prep_id, prep_manf.quote_no) as is_myexclusive,
+
+			(if is_myexclusive = 'Y' then
+				f_get_price(1185,prep_manf.grid_size,prep_manf.sqft,prep_manf.shape) * prep_manf.sqft 
+			else
+				0
+			endif) as myexclusive_price,
+
+
+			f_get_discount_for_liners(prep_manf.prep_id, prep_manf.quote_no, "prep_manf"."liner_wall_thickness","prep_manf"."liner_bottom_thickness") as liner_upcharge,
+
+			(if prep_manf.shape = 'FF' and 3 = 4 then
+				(    ("prep_manf"."base_cost" / 1.15 ) / (1 + liner_upcharge      )   )
+			 else
+				(    ("prep_manf"."base_cost") / (1 + liner_upcharge      )   )
+			 endif) as base_cost_raw ,
+			 f_get_discount_for_liners(prep_manf.prep_id, prep_manf.quote_no, 28,20)  liner_upcharge_new ,
+
+			 (
+			 	(if prep_manf.shape = 'FF' and 3 = 4 then
+					(base_cost_raw * (1 + liner_upcharge_new) )  * 1.15
+			 	 else
+					(base_cost_raw * (1 + liner_upcharge_new) )
+
+			 	 endif)
+
+			   -
+	
+				(
+					coalesce(
+									(
+										select sum("treatment_price"."unit_price")
+										from "product_treatment", "treatment_h", "treatment_price","prep_treatment"
+										where 	"product_treatment"."treatment_code" = "treatment_h"."treatment_code" and
+													"treatment_h"."treatment_Code" = "treatment_price"."treatment_code" and
+													"treatment_price"."effective_date" in
+													(
+				
+														select max("tp"."effective_date")
+														from "treatment_price" as "tp"
+														where "tp"."treatment_Code" = "treatment_price"."treatment_code"
+													) and
+													"product_treatment"."product_id" = prep_manf.product_id  and
+													product_treatment.texture_treatment = 'N' and
+													"product_treatment"."product_id" = prep_manf.product_id and
+													product_treatment.texture_treatment = 'N'  and
+													"prep_treatment"."treatment_Code" = "treatment_h"."treatment_code" and
+													"prep_treatment"."treatment_Code" in ('L120', 'L121','L120B','L134') and
+													"prep_treatment"."prep_id" = "prep"."prep_id" and
+													"prep_treatment"."quote_no" = used_quote
+									),
+									0
+						
+
+							  )
+
+				) 
+
+			 )as base_cost_new ,
+
+			 (
+				(if is_myexclusive = 'Y' then myexclusive_price else  base_cost_new  endif) + 
+				 "prep_manf"."treatment_cost" +  
+				 (
+							select sum("treatment_price"."unit_price")
+							from "product_treatment", "treatment_h", "treatment_price"
+							where 	"product_treatment"."treatment_code" = "treatment_h"."treatment_code" and
+										"treatment_h"."treatment_Code" = "treatment_price"."treatment_code" and
+										"treatment_price"."effective_date" in
+											(
+				
+												select max("tp"."effective_date")
+												from "treatment_price" as "tp"
+												where "tp"."treatment_Code" = "treatment_price"."treatment_code"
+											) and
+										"product_treatment"."product_id" = product.product_id  and
+										product_treatment.texture_treatment = 'N' and
+										3 = 3
+				 ) +
+
+				"prep_manf"."cover_hardware_cost" 
+			 ) as total_new ,
+		
+		    (
+				((if is_myexclusive = 'Y' then myexclusive_price else  base_cost_new  endif)  * dealer_discount_factor ) + 
+				dbf_get_treatment_cost_of_job("prep"."prep_id", used_quote ) +	
+				(
+						(
+							select sum("treatment_price"."unit_price")
+							from "product_treatment", "treatment_h", "treatment_price"
+							where 	"product_treatment"."treatment_code" = "treatment_h"."treatment_code" and
+										"treatment_h"."treatment_Code" = "treatment_price"."treatment_code" and
+										"treatment_price"."effective_date" in
+											(
+				
+												select max("tp"."effective_date")
+												from "treatment_price" as "tp"
+												where "tp"."treatment_Code" = "treatment_price"."treatment_code"
+											) and
+										"product_treatment"."product_id" = product.product_id  and
+										product_treatment.texture_treatment = 'N' and
+										3 = 3
+						) * dealer_discount_factor
+
+				)  +
+			   ("prep_manf"."cover_hardware_cost" * dealer_discount_factor) 
+
+			) as net_new ,
+			
+			
+
+			(
+				if ( wallbottom || '_pearl_embossed' ) = wallbottom_quote     then
+					if is_pearlessence_embossed = 0 then
+						1
+					else
+						0
+					endif
+						
+				else
+						1
+				endif
+		   ) as showme ,
+			("prep_manf"."liner_wall_thickness" || "prep_manf"."liner_bottom_thickness") as wallbottom ,
+			'2820_pearl_embossed' as wallbottom_quote,
+			 prep_manf.sqft ,
+			prep_manf.sales_tax ,
+			product.description ,
+			(
+				''
+
+
+			) as new_product_description ,
+
+			(	Select count (*) 
+				from "prep_rules" 
+				where ( "prep_rules"."prep_id" = prep.prep_id ) and 
+						( "prep_rules"."type" = 'List' ) and 
+						( "prep_rules"."active" = 'Y' )) as list_only ,
+			'Wall: 28 mil - Bottom: 20 mil' as quote_type ,
+			'15' as letter_quote ,
+			(
+				select  count(*)
+				from "prep_treatment" , "prep_manf" as "pm"
+				where "prep_treatment"."prep_id" = "prep"."prep_id" and
+						"prep_treatment"."treatment_Code" in ( 'L121') and
+						prep_treatment.quote_no <> used_quote and
+						"pm".prep_id = prep_treatment.prep_id and
+						"pm".quote_no = prep_treatment.quote_no and
+						pm.liner_wall_thickness  = 28 and liner_bottom_thickness = 20 
+			) as present ,
+			product.wall_thickness_allowed, 
+			product.bottom_thickness_allowed ,
+			(
+				select min(pm.quote_no)
+				from prep_manf as pm
+				where pm.prep_id = prep.prep_id and
+						pm.status > 0
+			) as used_quote,
+			product.product_id ,
+
+			(
+				select count(*)
+				from product_treatment, product as p
+				where product_treatment.product_id = p.product_id and
+						product_treatment.treatment_code  in ('L121','L134') and
+						product_treatment.texture_treatment = 'N' and
+						product_treatment.active = 'Y' and
+						product_treatment.product_id =  prep_manf.product_id
+			) as is_pearlessence_embossed ,
+
+			(
+				select warranty_Header.liner_extended_warranty
+				from warranty_header
+				where
+						(
+							(prep.prep_type = 'E' and prep.prep_id = warranty_header.prep_id) or
+							(prep.prep_type = 'O' and prep.order_no = warranty_header.order_no) 
+						)
+			) as lew,
+
+			(
+				select warranty_Header.liner_extended_warranty_type
+				from warranty_header
+				where
+						(
+							(prep.prep_type = 'E' and prep.prep_id = warranty_header.prep_id) or
+							(prep.prep_type = 'O' and prep.order_no = warranty_header.order_no) 
+						)
+			) as lew_type ,
+
+			(
+				select max(coalesce(warranty_header.lew_amount,0))
+				from warranty_Header
+				where (
+							(prep.prep_type = 'E' and prep.prep_id = warranty_header.prep_id) or
+							(prep.prep_type = 'O' and prep.order_no = warranty_header.order_no) 
+						)
+
+			) as lewamount 
+				
+    FROM "prep",   
+         "prep_manf" ,
+			"product" 
+   WHERE ( "prep"."prep_id" = "prep_manf"."prep_id" ) AND  
+         ( "prep_manf"."quote_no" = used_quote ) AND  
+         ( "prep"."type" = 'LN' ) AND  
+         ( "prep_manf"."product_group" = 'C' )    and
+			prep.prep_id = :al_prep_id and
+			prep_manf.base_cost > 0 and
+			prep_manf.status > 0 and
+			1543 = product.product_id and
+			showme = 1 and
+			present = 0  and
+			is_myexclusive = 'N' and
+			1 = 2 AND
+			(
+				(is_pearlessence_embossed = 0 ) or
+				(
+					(
+						select count(*)
+						from product as p
+						where (p.wall_thickness_allowed = 'A' or p.wall_thickness_allowed = '28' ) and
+								(p.bottom_thickness_allowed = 'A' or p.bottom_thickness_allowed = '20') and
+								(p.product_id = prep_manf.product_id )
+					) > 0
+				)
+
+			)
+
+ 
+UNION
+
+  SELECT "prep"."prep_id",   
+         "prep_manf"."base_cost",   
+         "prep_manf"."treatment_cost",   
+         "prep_manf"."cover_hardware_cost",  
+			prep_manf.cover_net, 
+         "prep_manf"."other_list",   
+         "prep_manf"."other_net",   
+         "prep_manf"."markdown",   
+         "prep_manf"."liner_wall_thickness",   
+         "prep_manf"."liner_bottom_thickness",   
+         "prep_manf"."shape" ,
+			"prep_manf"."dealer_discount",
+			f_Effective_Discount("prep_manf"."dealer_discount") as dealer_discount_factor,
+
+			dbf_is_myexclusive(prep_manf.prep_id, prep_manf.quote_no) as is_myexclusive,
+
+			(if is_myexclusive = 'Y' then
+				f_get_price(1185,prep_manf.grid_size,prep_manf.sqft,prep_manf.shape) * prep_manf.sqft 
+			else
+				0
+			endif) as myexclusive_price,
+
+
+			f_get_discount_for_liners(prep_manf.prep_id, prep_manf.quote_no, "prep_manf"."liner_wall_thickness","prep_manf"."liner_bottom_thickness") as liner_upcharge,
+
+			(if prep_manf.shape = 'FF' and 3 = 4  then
+				(    ("prep_manf"."base_cost" / 1.15 ) / (1 + liner_upcharge      )   )
+			 else
+				(    ("prep_manf"."base_cost") / (1 + liner_upcharge      )   )
+			 endif) as base_cost_raw ,
+			 f_get_discount_for_liners(prep_manf.prep_id, prep_manf.quote_no, 28,28)  liner_upcharge_new ,
+
+			 (
+			 	(if prep_manf.shape = 'FF' and 3 = 4 then
+					(base_cost_raw * (1 + liner_upcharge_new) )  * 1.15
+			 	 else
+						(base_cost_raw * (1 + liner_upcharge_new) )
+			 	 endif)
+				-
+				(
+					coalesce(
+									(
+										select sum("treatment_price"."unit_price")
+										from "product_treatment", "treatment_h", "treatment_price", "prep_treatment" 
+										where 	"product_treatment"."treatment_code" = "treatment_h"."treatment_code" and
+													"treatment_h"."treatment_Code" = "treatment_price"."treatment_code" and
+													"treatment_price"."effective_date" in
+													(
+				
+														select max("tp"."effective_date")
+														from "treatment_price" as "tp"
+														where "tp"."treatment_Code" = "treatment_price"."treatment_code"
+													) and
+													"product_treatment"."product_id" = prep_manf.product_id  and
+													product_treatment.texture_treatment = 'N' and
+													"product_treatment"."product_id" = prep_manf.product_id and
+													product_treatment.texture_treatment = 'N'  and
+													"prep_treatment"."treatment_Code" = "treatment_h"."treatment_code" and
+													"prep_treatment"."treatment_Code" in ('L120', 'L121','L120B','L134') and
+													"prep_treatment"."prep_id" = "prep"."prep_id" and
+													"prep_treatment"."quote_no" = used_quote
+									),
+									0
+						
+
+							  )
+
+				) 
+
+			 )as base_cost_new ,
+
+			 (
+				(if is_myexclusive = 'Y' then myexclusive_price else  base_cost_new  endif) + 
+				( 
+					("prep_manf"."treatment_cost" ) -
+					(
+							(
+								select sum( prep_treatment.quantity  * prep_treatment.unit_price )
+								from treatment_h, prep_treatment
+								where 
+										(prep_treatment.treatment_code = "treatment_h"."treatment_Code" ) and
+										(treatment_h.description like 'Liner: Tex Tread:%') and 
+										"prep_treatment"."prep_id" = "prep"."prep_id" and
+										"prep_treatment"."quote_no" = used_quote 
+							)
+						) 
+
+				)+  
+				(
+							select sum("treatment_price"."unit_price")
+							from "product_treatment", "treatment_h", "treatment_price"
+							where 	"product_treatment"."treatment_code" = "treatment_h"."treatment_code" and
+										"treatment_h"."treatment_Code" = "treatment_price"."treatment_code" and
+										"treatment_price"."effective_date" in
+											(
+				
+												select max("tp"."effective_date")
+												from "treatment_price" as "tp"
+												where "tp"."treatment_Code" = "treatment_price"."treatment_code"
+											) and
+										"product_treatment"."product_id" = product.product_id  and
+										product_treatment.texture_treatment = 'N' and
+										3 = 3
+				) +
+
+
+				"prep_manf"."cover_hardware_cost" 
+          ) as total_new ,
+		
+		    (
+					((if is_myexclusive = 'Y' then myexclusive_price else  base_cost_new  endif)  * dealer_discount_factor ) + 
+				dbf_get_treatment_cost_of_job_liner_embossed_pearl("prep"."prep_id", used_quote,'EMBOSSED' ) +	
+				(
+						(
+							select sum("treatment_price"."unit_price")
+							from "product_treatment", "treatment_h", "treatment_price"
+							where 	"product_treatment"."treatment_code" = "treatment_h"."treatment_code" and
+										"treatment_h"."treatment_Code" = "treatment_price"."treatment_code" and
+										"treatment_price"."effective_date" in
+											(
+				
+												select max("tp"."effective_date")
+												from "treatment_price" as "tp"
+												where "tp"."treatment_Code" = "treatment_price"."treatment_code"
+											) and
+										"product_treatment"."product_id" = product.product_id  and
+										product_treatment.texture_treatment = 'N' and
+										3 = 3
+						) * dealer_discount_factor
+
+				)  +
+			   ("prep_manf"."cover_hardware_cost" * dealer_discount_factor) 
+
+			) as net_new ,
+			
+			
+
+			(
+				if ( wallbottom || '_pearl_embossed' ) = wallbottom_quote     then
+					if is_pearlessence_embossed = 0 then
+						1
+					else
+						0
+					endif
+						
+				else
+						1
+				endif
+		   ) as showme ,
+			("prep_manf"."liner_wall_thickness" || "prep_manf"."liner_bottom_thickness") as wallbottom ,
+			'2828_pearl_embossed' as wallbottom_quote, 
+			 prep_manf.sqft ,
+			prep_manf.sales_tax ,
+			product.description ,
+			(
+				''
+
+
+			) as new_product_description ,
+
+			(	Select count (*) 
+				from "prep_rules" 
+				where ( "prep_rules"."prep_id" = prep.prep_id ) and 
+						( "prep_rules"."type" = 'List' ) and 
+						( "prep_rules"."active" = 'Y' )) as list_only ,
+			'Wall: 28 mil - Bottom: 28 mil' as quote_type ,
+			'16' as letter_quote ,
+			(
+				select  count(*)
+				from "prep_treatment" , "prep_manf" as "pm"
+				where "prep_treatment"."prep_id" = "prep"."prep_id" and
+						"prep_treatment"."treatment_Code" in ('L121') and
+						prep_treatment.quote_no <> used_quote and
+						"pm".prep_id = prep_treatment.prep_id and
+						"pm".quote_no = prep_treatment.quote_no and
+						pm.liner_wall_thickness  = 28 and liner_bottom_thickness = 28
+			) as present ,
+			product.wall_thickness_allowed, 
+			product.bottom_thickness_allowed ,
+			(
+				select min(pm.quote_no)
+				from prep_manf as pm
+				where pm.prep_id = prep.prep_id and
+						pm.status > 0
+			) as used_quote,
+			product.product_id ,
+
+			(
+				select count(*)
+				from product_treatment, product as p
+				where product_treatment.product_id = p.product_id and
+						product_treatment.treatment_code  in ('L121','L134') and
+						product_treatment.texture_treatment = 'N' and
+						product_treatment.active = 'Y' and
+						product_treatment.product_id =  prep_manf.product_id
+			) as is_pearlessence_embossed ,
+
+			(
+				select warranty_Header.liner_extended_warranty
+				from warranty_header
+				where
+						(
+							(prep.prep_type = 'E' and prep.prep_id = warranty_header.prep_id) or
+							(prep.prep_type = 'O' and prep.order_no = warranty_header.order_no) 
+						)
+			) as lew,
+
+			(
+				select warranty_Header.liner_extended_warranty_type
+				from warranty_header
+				where
+						(
+							(prep.prep_type = 'E' and prep.prep_id = warranty_header.prep_id) or
+							(prep.prep_type = 'O' and prep.order_no = warranty_header.order_no) 
+						)
+			) as lew_type ,
+
+			(
+				select max(coalesce(warranty_header.lew_amount,0))
+				from warranty_Header
+				where (
+							(prep.prep_type = 'E' and prep.prep_id = warranty_header.prep_id) or
+							(prep.prep_type = 'O' and prep.order_no = warranty_header.order_no) 
+						)
+
+			) as lewamount 
+				
+    FROM "prep",   
+         "prep_manf" ,
+			"product" 
+   WHERE ( "prep"."prep_id" = "prep_manf"."prep_id" ) AND  
+         ( "prep_manf"."quote_no" = used_quote ) AND  
+         ( "prep"."type" = 'LN' ) AND  
+         ( "prep_manf"."product_group" = 'C' )    and
+			prep.prep_id = :al_prep_id and
+			prep_manf.base_cost > 0 and
+			prep_manf.status > 0 and
+			1543 = product.product_id and
+			showme = 1 and
+			present = 0  and
+			is_myexclusive = 'N' AND
+			(
+				(is_pearlessence_embossed = 0 ) or
+				(
+					(
+						select count(*)
+						from product as p
+						where (p.wall_thickness_allowed = 'A' or p.wall_thickness_allowed = '28' ) and
+								(p.bottom_thickness_allowed = 'A' or p.bottom_thickness_allowed = '28') and
+								(p.product_id = prep_manf.product_id )
+					) > 0
+				)
+
+			)
+
+
+UNION
+
+  SELECT "prep"."prep_id",   
+         "prep_manf"."base_cost",   
+         "prep_manf"."treatment_cost",   
+         "prep_manf"."cover_hardware_cost",  
+			prep_manf.cover_net, 
+         "prep_manf"."other_list",   
+         "prep_manf"."other_net",   
+         "prep_manf"."markdown",   
+         "prep_manf"."liner_wall_thickness",   
+         "prep_manf"."liner_bottom_thickness",   
+         "prep_manf"."shape" ,
+			"prep_manf"."dealer_discount",
+			f_Effective_Discount("prep_manf"."dealer_discount") as dealer_discount_factor,
+
+			dbf_is_myexclusive(prep_manf.prep_id, prep_manf.quote_no) as is_myexclusive,
+
+			(if is_myexclusive = 'Y' then
+				f_get_price(1185,prep_manf.grid_size,prep_manf.sqft,prep_manf.shape) * prep_manf.sqft 
+			else
+				0
+			endif) as myexclusive_price,
+
+
+			f_get_discount_for_liners(prep_manf.prep_id, prep_manf.quote_no, "prep_manf"."liner_wall_thickness","prep_manf"."liner_bottom_thickness") as liner_upcharge,
+
+			(if prep_manf.shape = 'FF' and 3 = 4  then
+				(    ("prep_manf"."base_cost" / 1.15 ) / (1 + liner_upcharge      )   )
+			 else
+				(    ("prep_manf"."base_cost") / (1 + liner_upcharge      )   )
+			 endif) as base_cost_raw ,
+			 f_get_discount_for_liners(prep_manf.prep_id, prep_manf.quote_no, 20,28)  liner_upcharge_new ,
+
+			 (
+			 	(if prep_manf.shape = 'FF'  and 3 = 4 then
+					(base_cost_raw * (1 + liner_upcharge_new) )  * 1.15
+			 	 else
+						(base_cost_raw * (1 + liner_upcharge_new) )
+			 	 endif) 
+				-
+				(
+					coalesce(
+									(
+										select sum("treatment_price"."unit_price")
+										from "product_treatment", "treatment_h", "treatment_price","prep_treatment"
+										where 	"product_treatment"."treatment_code" = "treatment_h"."treatment_code" and
+													"treatment_h"."treatment_Code" = "treatment_price"."treatment_code" and
+													"treatment_price"."effective_date" in
+													(
+				
+														select max("tp"."effective_date")
+														from "treatment_price" as "tp"
+														where "tp"."treatment_Code" = "treatment_price"."treatment_code"
+													) and
+													"product_treatment"."product_id" = prep_manf.product_id  and
+													product_treatment.texture_treatment = 'N' and
+													"product_treatment"."product_id" = prep_manf.product_id and
+													product_treatment.texture_treatment = 'N'  and
+													"prep_treatment"."treatment_Code" = "treatment_h"."treatment_code" and
+													"prep_treatment"."treatment_Code" in ('L120', 'L121','L120B','L134') and
+													"prep_treatment"."prep_id" = "prep"."prep_id" and
+													"prep_treatment"."quote_no" = used_quote
+									),
+									0
+						
+
+							  )
+
+				)
+
+			 )as base_cost_new ,
+
+			 (
+				(if is_myexclusive = 'Y' then myexclusive_price else  base_cost_new  endif) + 
+				"prep_manf"."treatment_cost" +  
+				(
+							select sum("treatment_price"."unit_price")
+							from "product_treatment", "treatment_h", "treatment_price"
+							where 	"product_treatment"."treatment_code" = "treatment_h"."treatment_code" and
+										"treatment_h"."treatment_Code" = "treatment_price"."treatment_code" and
+										"treatment_price"."effective_date" in
+											(
+				
+												select max("tp"."effective_date")
+												from "treatment_price" as "tp"
+												where "tp"."treatment_Code" = "treatment_price"."treatment_code"
+											) and
+										"product_treatment"."product_id" = product.product_id  and
+										product_treatment.texture_treatment = 'N' and
+										3 = 3
+				) +
+
+				"prep_manf"."cover_hardware_cost" 
+		
+
+			 ) as total_new ,
+		
+		    (
+				((if is_myexclusive = 'Y' then myexclusive_price else  base_cost_new  endif)  * dealer_discount_factor ) + 
+				dbf_get_treatment_cost_of_job("prep"."prep_id", used_quote ) +	
+				(
+						(
+							select sum("treatment_price"."unit_price")
+							from "product_treatment", "treatment_h", "treatment_price"
+							where 	"product_treatment"."treatment_code" = "treatment_h"."treatment_code" and
+										"treatment_h"."treatment_Code" = "treatment_price"."treatment_code" and
+										"treatment_price"."effective_date" in
+											(
+				
+												select max("tp"."effective_date")
+												from "treatment_price" as "tp"
+												where "tp"."treatment_Code" = "treatment_price"."treatment_code"
+											) and
+										"product_treatment"."product_id" = product.product_id  and
+										product_treatment.texture_treatment = 'N' and
+										3 = 3
+						) * dealer_discount_factor
+
+				)  +
+			   ("prep_manf"."cover_hardware_cost" * dealer_discount_factor) 
+
+			) as net_new ,
+			
+			
+
+			(
+				if ( wallbottom || '_pearl_embossed' ) = wallbottom_quote     then
+					if is_pearlessence_embossed = 0 then
+						1
+					else
+						0
+					endif
+						
+				else
+						1
+				endif
+		   ) as showme ,
+			("prep_manf"."liner_wall_thickness" || "prep_manf"."liner_bottom_thickness") as wallbottom ,
+			'2028_pearl_embossed' as wallbottom_quote,
+			 prep_manf.sqft ,
+			prep_manf.sales_tax ,
+			product.description ,
+			(
+				''
+
+
+			) as new_product_description ,
+
+			(	Select count (*) 
+				from "prep_rules" 
+				where ( "prep_rules"."prep_id" = prep.prep_id ) and 
+						( "prep_rules"."type" = 'List' ) and 
+						( "prep_rules"."active" = 'Y' )) as list_only ,
+			'Wall: 20 mil - Bottom: 28 mil' as quote_type ,
+			'17' as letter_quote ,
+			(
+				select  count(*)
+				from "prep_treatment" , "prep_manf" as "pm"
+				where "prep_treatment"."prep_id" = "prep"."prep_id" and
+						"prep_treatment"."treatment_Code" in ( 'L121') and
+						prep_treatment.quote_no <> used_quote and
+						"pm".prep_id = prep_treatment.prep_id and
+						"pm".quote_no = prep_treatment.quote_no and
+						pm.liner_wall_thickness  = 20 and liner_bottom_thickness = 28
+			) as present ,
+			product.wall_thickness_allowed, 
+			product.bottom_thickness_allowed ,
+			(
+				select min(pm.quote_no)
+				from prep_manf as pm
+				where pm.prep_id = prep.prep_id and
+						pm.status > 0
+			) as used_quote,
+			product.product_id ,
+
+			(
+				select count(*)
+				from product_treatment, product as p
+				where product_treatment.product_id = p.product_id and
+						product_treatment.treatment_code  in ( 'L121','L134') and
+						product_treatment.texture_treatment = 'N' and
+						product_treatment.active = 'Y' and
+						product_treatment.product_id =  prep_manf.product_id
+			) as is_pearlessence_embossed ,
+
+			(
+				select warranty_Header.liner_extended_warranty
+				from warranty_header
+				where
+						(
+							(prep.prep_type = 'E' and prep.prep_id = warranty_header.prep_id) or
+							(prep.prep_type = 'O' and prep.order_no = warranty_header.order_no) 
+						)
+			) as lew,
+
+			(
+				select warranty_Header.liner_extended_warranty_type
+				from warranty_header
+				where
+						(
+							(prep.prep_type = 'E' and prep.prep_id = warranty_header.prep_id) or
+							(prep.prep_type = 'O' and prep.order_no = warranty_header.order_no) 
+						)
+			) as lew_type ,
+
+			(
+				select max(coalesce(warranty_header.lew_amount,0))
+				from warranty_Header
+				where (
+							(prep.prep_type = 'E' and prep.prep_id = warranty_header.prep_id) or
+							(prep.prep_type = 'O' and prep.order_no = warranty_header.order_no) 
+						)
+
+			) as lewamount 
+				
+    FROM "prep",   
+         "prep_manf" ,
+			"product" 
+   WHERE ( "prep"."prep_id" = "prep_manf"."prep_id" ) AND  
+         ( "prep_manf"."quote_no" = used_quote ) AND  
+         ( "prep"."type" = 'LN' ) AND  
+         ( "prep_manf"."product_group" = 'C' )    and
+			prep.prep_id = :al_prep_id and
+			prep_manf.base_cost > 0 and
+			prep_manf.status > 0 and
+			1543 = product.product_id and
+			showme = 1 and
+			present = 0  and
+			is_myexclusive = 'N' and
+			1 = 2  AND
+			(
+				(is_pearlessence_embossed = 0 ) or
+				(
+					(
+						select count(*)
+						from product as p
+						where (p.wall_thickness_allowed = 'A' or p.wall_thickness_allowed = '20') and
+								(p.bottom_thickness_allowed = 'A' or p.bottom_thickness_allowed = '28') and
+								(p.product_id = prep_manf.product_id )
+					) > 0
+				)
+
+			)
