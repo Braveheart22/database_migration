@@ -6,7 +6,7 @@ Migrating a database from **SAP (Sybase) SQL Anywhere 9.0** to **Microsoft SQL S
 | ----------- | ------------------- | ------------------------------------------- |
 | Server      | Emmitt              | LOOP-DB01                                   |
 | Database    | Smith               | Loop-Loc_v1                                 |
-| ODBC Driver | SQL Anywhere 9.0    | ODBC Driver 18 for SQL Server               |
+| ODBC Driver | SQL Anywhere 17     | ODBC Driver 18 for SQL Server               |
 | Credentials | UID=dba / PWD=????? | Windows Authentication (Trusted_Connection) |
 
 > **Note on "unloading" from SQL Anywhere:** All extraction is done by the Python scripts
@@ -30,9 +30,9 @@ pip install pyodbc
 
 Both drivers must be installed on the machine running the scripts:
 
-- **SQL Anywhere 17** — used to connect to the SQLA 9.0 source server
+- **SQL Anywhere 17** — used to connect to the SQLA 9.0 source server (Needs a 64-bit driver which is why 17 is used)
   - Verify: open ODBC Data Source Administrator → Drivers tab → confirm "SQL Anywhere 17" is listed
-- **ODBC Driver 17 for SQL Server** — used to connect to the MSSQL target
+- **ODBC Driver 18 for SQL Server** — used to connect to the MSSQL target
   - Download from Microsoft if not installed
 
 ### 3. Configure ODBC DSNs
