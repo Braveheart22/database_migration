@@ -1,143 +1,321 @@
-  PREREQUISITES - SQL SERVER INSTANCE SETUP
-    One-time server-level configuration before any migration steps.
+DATABASE MIGRATION PROTOCOL
+SQL Anywhere 9.0 (Emmitt/Smith) → SQL Server 2025 (LOOP-DB01/Loop-Loc_v1)
+===========================================================================
 
-    Step 0:  Enable Mixed Mode Authentication
-             Required for SQL Server logins to work (Phase 5 creates SQL Server logins).
-             1. In SSMS, right-click the server → Properties → Security page
-             2. Set "Server authentication" to:
-                  SQL Server and Windows Authentication mode
-             3. Click OK
-             4. Restart the SQL Server service (change not active until restarted)
-                  Right-click server in SSMS → Restart
-                  OR use SQL Server Configuration Manager
+NOTE: All extraction from SQLA is done via Python/pyodbc. No separate SQLA
+      dbunload utility is needed. Scripts connect directly to SQLA via ODBC
+      and pull schema/data using SQL queries against system catalog tables.
 
+===========================================================================
+  PREREQUISITES
+===========================================================================
+
+  Step 0a: Install Python dependencies
+           pip install pyodbc
+
+  Step 0b: Install ODBC drivers
+           - SQL Anywhere 17  (for SQLA 9.0 source)
+           - ODBC Driver 17 for SQL Server  (for MSSQL target)
+           Verify in ODBC Data Source Administrator → Drivers tab.
+
+  Step 0c: Configure ODBC DSNs for application switching
+           Three DSNs are needed:
+             Catch22        -- active DSN (what the app connects to)
+             Catch22-MSSQL  -- SQL Server DSN, parked when app is on SQLA
+             Catch22-SQLA   -- SQL Anywhere DSN, parked when app is on MSSQL
+           Only ONE of Catch22-MSSQL / Catch22-SQLA exists at any time.
+           Use toggle_catch22.py to switch the app between databases.
+
+  Step 0d: Enable SQL Server Mixed Mode Authentication (one-time)
+           1. SSMS → right-click server → Properties → Security page
+           2. Set: SQL Server and Windows Authentication mode
+           3. Click OK
+           4. Restart SQL Server service (change not active until restarted)
+
+  Step 0e: Verify connectivity to both servers before proceeding.
+
+===========================================================================
   PHASE 1 - SCHEMA SETUP
-    Step 1:  Drop and recreate the SQL Server database (clean slate)
-       1. USE master;
-       2. GO
-       3. DROP DATABASE {Loop-Loc database name};
-       4. GO
-       5. CREATE DATABASE {Loop-Loc database name};
-       6. GO
-    Step 2:  Run tables.py → generates create_tables.sql
-    Step 3:  Run create_tables.sql in SSMS
-    Step 4:  Run compareTables.py → must show 0 missing, 0 drift
-             Output sections:
-               - Tables in SQLA but NOT in SQL Server  (MISSING)
-               - Tables in SQL Server but NOT in SQLA  (EXTRA)
-               - Tables with different column counts   (DRIFT)
-                   + MISSING in MSSQL: column was in SQLA but not added to MSSQL
-                   - EXTRA   in MSSQL: column exists in MSSQL but not in SQLA
-             If any MISSING or DRIFT → GOTO Phase 1A
+===========================================================================
 
-  PHASE 1A - SCHEMA REMEDIATION (run only if Phase 1 Step 4 finds issues)
-    Step 5:  Run alterTables.py → generates alter_tables.sql
-             Scans every table present in both databases and generates
-             ALTER TABLE ... ADD statements for any column in SQLA that
-             is missing in MSSQL. AUTOINCREMENT columns are flagged with
-             a WARNING comment and added as INT - verify manually.
-    Step 6:  For any MISSING tables (in SQLA but not in MSSQL at all),
-             run their CREATE TABLE DDL from create_tables.sql in SSMS.
-    Step 7:  Run alter_tables.sql in SSMS
-    Step 8:  Re-run compareTables.py → confirm 0 missing, 0 drift before proceeding
+  Step 1:  Drop and recreate the SQL Server database (clean slate)
+             USE master; GO
+             DROP DATABASE [Loop-Loc_v1]; GO
+             CREATE DATABASE [Loop-Loc_v1]; GO
 
+  Step 2:  Run tables.py → generates create_tables.sql
+           Connects to SQLA, reads DBA-owned table definitions, translates
+           data types to T-SQL equivalents.
+
+  Step 3:  Run create_tables.sql in SSMS
+
+  Step 4:  Run compareTables.py → must show 0 missing, 0 drift
+           Output sections:
+             MISSING: tables in SQLA but not in MSSQL
+             EXTRA:   tables in MSSQL but not in SQLA
+             DRIFT:   column-level differences
+               + MISSING in MSSQL: column in SQLA but not added to MSSQL
+               - EXTRA in MSSQL:   column in MSSQL but not in SQLA
+           If any MISSING or DRIFT found → GOTO Phase 1A
+
+===========================================================================
+  PHASE 1A - SCHEMA REMEDIATION (only if Phase 1 Step 4 finds issues)
+===========================================================================
+
+  Step 5:  Run alterTables.py → generates alter_tables.sql
+           Generates ALTER TABLE ... ADD for each column in SQLA missing
+           from MSSQL. AUTOINCREMENT columns flagged WARNING, added as INT.
+
+  Step 6:  For MISSING tables, run their CREATE TABLE from create_tables.sql
+
+  Step 7:  Run alter_tables.sql in SSMS
+
+  Step 8:  Re-run compareTables.py → confirm 0 missing, 0 drift
+
+===========================================================================
   PHASE 2 - DATA MIGRATION
-    Step 9:  Run allTableTransfer.py
-             Creates a timestamped CSV log: migration_log_YYYYMMDD_HHMMSS.csv
-             Columns: Table, Status, Rows, Elapsed_sec, Error
-             Flushes after each table - log is safe if script crashes mid-run.
-    Step 10: Review the CSV log for failed tables
-             If failures exist:
-               1. Open migration_log_YYYYMMDD_HHMMSS.csv and review the Error
-                  column to understand why each table failed.
-               2. Investigate and resolve the root cause.
-                  Common causes:
-                    - Invalid column name (42S22): schema drift or wrong database
-                    - PK violation (23000): duplicate or NULL primary key in source data
-                    - datetime out of range (22007): date value before 1753-01-01 in source
-               3. Run failedTableTransfer.py - automatically reads FAILED rows
-                  from the most recent migration_log_*.csv and re-runs those
-                  tables only. Produces its own timestamped log for the re-run.
-               4. Repeat until 0 failures (or remaining failures are understood
-                  and accepted).
+===========================================================================
 
+  Step 9:  Run allTableTransfer.py
+           Creates migration_log_YYYYMMDD_HHMMSS.csv
+           Columns: Table, Status, Rows, Elapsed_sec, Error
+           Log is flushed after each table — safe if script crashes.
+
+  Step 10: Review CSV log for failed tables
+           Common error causes:
+             42S22 Invalid column name: schema drift or wrong database
+             23000 PK violation: duplicate or NULL PK in source data
+             22007 datetime out of range: date before 1753-01-01
+           To retry: run failedTableTransfer.py (reads most recent log,
+           re-runs FAILED tables only, produces new timestamped log)
+           Repeat until 0 failures.
+
+===========================================================================
   PHASE 3 - VALIDATION
-    Step 11: Run rowCountValidation.py → compare row counts SQLA vs MSSQL
-             Every table must match before proceeding.
-             Writes a timestamped validation_log_YYYYMMDD_HHMMSS.csv.
+===========================================================================
 
-  PHASE 4 - POST MIGRATION
-    Step 12: Run fkConstraints.py → generates fk_constraints.sql
-             Reads all DBA-owned FK relationships from SQL Anywhere and
-             generates ALTER TABLE ... ADD CONSTRAINT ... FOREIGN KEY
-             statements for SQL Server. Handles composite (multi-column)
-             FKs. Only connects to SQLA - no changes made to SQL Server.
-    Step 13: Run fk_constraints.sql in SSMS
-             Review any errors - FK failures usually mean a referenced row
-             is missing in the parent table (data integrity issue in source).
-    Step 14: Set SQL Server to FULL recovery mode
-    Step 15: Configure backup schedule
+  Step 11: Run rowCountValidation.py → compare row counts SQLA vs MSSQL
+           Every table must match before proceeding.
+           Writes validation_log_YYYYMMDD_HHMMSS.csv
 
+===========================================================================
+  PHASE 4 - POST-MIGRATION HOUSEKEEPING
+===========================================================================
+
+  Step 12: Run fkConstraints.py → generates fk_constraints.sql
+           Reads FK relationships from SQLA.
+           Generates ALTER TABLE ... ADD CONSTRAINT ... FOREIGN KEY.
+           Only connects to SQLA — no MSSQL changes.
+
+  Step 13: Run fk_constraints.sql in SSMS
+           FK failures usually mean missing parent row (source data issue).
+
+  Step 14: Set SQL Server FULL recovery mode:
+             ALTER DATABASE [Loop-Loc_v1] SET RECOVERY FULL;
+
+  Step 15: Configure backup schedule.
+
+===========================================================================
   PHASE 5 - USER MIGRATION
-    Step 16: Run migrateUsers.py → generates create_users.sql
-             Reads all non-system users from SYS.SYSUSERPERM in SQL Anywhere.
-             Generates for each user:
-               - CREATE LOGIN with default password = username
-                 (CHECK_POLICY = OFF to allow username as password)
-               - CREATE USER mapped to the login
-               - Role assignment:
-                   dba_priv = Y → db_owner
-                   all others  → db_datareader + db_datawriter
-             IF NOT EXISTS guards make the script safe to re-run.
-             NOTE: create_users.sql is excluded from git (contains credentials).
-    Step 17: Run create_users.sql in SSMS
-    Step 18: Notify users to change their passwords on first login
+===========================================================================
 
-  PHASE 6 - TRIGGER MIGRATION
-    Step 19: Run extractTriggers.py → generates sqla_triggers_source.sql
-             Extracts all DBA-owned trigger definitions from SQL Anywhere.
-             Output is for reference only - will NOT run in SQL Server.
-             BEFORE triggers are flagged with a WARNING comment.
-    Step 20: Convert triggers to T-SQL
-             SQL Anywhere and SQL Server T-SQL use different trigger syntax.
-             Key differences to watch for:
-               - BEFORE trigger             → INSTEAD OF trigger
-               - AFTER trigger              → AFTER trigger
-               - REFERENCING OLD AS old ... → deleted / inserted virtual tables
-               - old.column_name            → deleted.column_name
-               - new.column_name            → inserted.column_name
-               - FOR EACH ROW               → (remove - SQL Server is set-based)
-               - IF...THEN...END IF         → IF...BEGIN...END
-               - NOW(), TODAY()             → GETDATE()
-               - || (string concat)         → +
-             NOTE: BEFORE triggers in SQL Anywhere can modify column values
-             before the row is written. SQL Server INSTEAD OF triggers replace
-             the entire DML operation - review each BEFORE trigger carefully.
-    Step 21: Run checkTriggerProgress.py at any time to see DONE vs PENDING
-             BEFORE triggers are flagged in the PENDING list as a reminder.
-    Step 22: Test each trigger in SQL Server before deploying to production
-    Step 23: Run exportTriggers.py → generates create_triggers.sql
-             Connects to SQL Server (not SQL Anywhere).
-             Exports all finished T-SQL triggers for go-live deployment.
-    Step 24: Run create_triggers.sql in SSMS on the production server
+  Step 16: Run migrateUsers.py → generates create_users.sql
+           Reads non-system users from SYS.SYSUSERPERM in SQLA.
+           Generates CREATE LOGIN, CREATE USER, role assignments.
+           Default password = username (CHECK_POLICY = OFF).
+           Role mapping: dba_priv=Y → db_owner; others → reader+writer.
+           IF NOT EXISTS guards make it safe to re-run.
+           NOTE: create_users.sql is gitignored (contains credentials).
 
-  PHASE 7 - STORED PROCEDURE MIGRATION
-    Step 25: Run extractProcedures.py → generates sqla_procedures_source.sql
-             Reads all DBA-owned stored procedures from SQL Anywhere (178 total).
-             Output is for reference only - will NOT run in SQL Server.
-    Step 26: Extract and translate procedures to T-SQL
-             SQL Anywhere and SQL Server T-SQL are different dialects.
-             Key syntax differences to watch for:
-               - IF...THEN...END IF      → IF...BEGIN...END
-               - LOOP...END LOOP         → WHILE
-               - LEAVE                   → BREAK
-               - CALL proc()             → EXEC proc
-               - SIGNAL                  → THROW / RAISERROR
-               - NOW(), TODAY()          → GETDATE()
-               - || (string concat)      → +
-    Step 27: Run checkProcedureProgress.py at any time to see DONE vs PENDING
-    Step 28: Test each procedure in SQL Server before deploying to production
-    Step 29: Run exportProcedures.py → generates create_procedures.sql
-             Connects to SQL Server (not SQL Anywhere).
-             Exports all finished T-SQL procedures for go-live deployment.
-    Step 30: Run create_procedures.sql in SSMS on the production server
+  Step 17: Run create_users.sql in SSMS
+
+  Step 18: Notify users to change passwords on first login
+
+===========================================================================
+  PHASE 6 - VIEW MIGRATION
+===========================================================================
+
+  Step 19: Run extractViews.py → generates sqla_views_source.sql
+           Extracts DBA-owned view definitions from SYS.SYSTABLE.
+           FOR REFERENCE ONLY — will NOT run in SQL Server.
+           Key syntax to convert:
+             STRING(a, b)         → a + b  or  CONCAT(a, b)
+             DATEFORMAT(d, fmt)   → FORMAT(d, fmt) or CONVERT()
+             TODAY()              → CAST(GETDATE() AS DATE)
+             NOW()                → GETDATE()
+             MONTHS(d1, d2)       → DATEDIFF(MONTH, d1, d2)
+             YEARS(d1, d2)        → DATEDIFF(YEAR, d1, d2)
+             MOD(a, b)            → a % b
+             backtick/double-quote identifiers → [square brackets]
+
+  Step 20: Create create_views.sql with converted T-SQL CREATE VIEW statements
+           Place views in dependency order (referenced views first).
+
+  Step 21: Run checkViewProgress.py at any time to see DONE vs PENDING views
+
+  Step 22: Run exportViews.py to deploy views to SQL Server
+           Reads create_views.sql, skips existing views, reports OK/ERROR.
+
+===========================================================================
+  PHASE 7 - TRIGGER MIGRATION
+===========================================================================
+
+  Step 23: Run extractTriggers.py → generates sqla_triggers_source.sql
+           Extracts DBA-owned trigger definitions from SQLA.
+           FOR REFERENCE ONLY — will NOT run in SQL Server.
+           BEFORE triggers are flagged with WARNING comment.
+
+  Step 24: Convert triggers to T-SQL
+           BEFORE trigger             → INSTEAD OF trigger
+           AFTER trigger              → AFTER trigger
+           REFERENCING OLD/NEW        → deleted / inserted virtual tables
+           old.col / new.col          → deleted.col / inserted.col
+           FOR EACH ROW               → (remove — SQL Server is set-based)
+           IF...THEN...END IF         → IF...BEGIN...END
+           NOW(), TODAY()             → GETDATE()
+           || (string concat)         → +
+           NOTE: BEFORE triggers modify values before write; INSTEAD OF
+           replaces the entire DML — review each BEFORE trigger carefully.
+
+  Step 25: Run checkTriggerProgress.py at any time to see DONE vs PENDING
+           BEFORE triggers are flagged in the PENDING list.
+
+  Step 26: Test each trigger in SQL Server before deploying to production
+
+  Step 27: Run exportTriggers.py → generates create_triggers.sql
+           Connects to SQL Server. Exports finished T-SQL triggers.
+
+  Step 28: Run create_triggers.sql in SSMS on production server
+
+===========================================================================
+  PHASE 8 - STORED PROCEDURE & FUNCTION MIGRATION
+===========================================================================
+
+  Step 29: Run extractProcedures.py → generates sqla_procedures_source.sql
+           Reads DBA-owned procedures and functions from SYS.SYSPROCEDURE.
+           FOR REFERENCE ONLY — will NOT run in SQL Server.
+
+  Step 30: Convert procedures and functions to T-SQL
+           IF...THEN...END IF         → IF...BEGIN...END
+           LOOP...END LOOP            → WHILE 1=1 BEGIN...END
+           LEAVE                      → BREAK
+           CALL proc()                → EXEC proc
+           SIGNAL                     → THROW / RAISERROR
+           NOW(), TODAY()             → GETDATE()
+           || (string concat)         → +
+           NOTE: SQLA functions are in DBA schema (called DBA.funcname()).
+           MSSQL CREATE FUNCTION lands in dbo schema. See Phase 9 to fix.
+
+  Step 31: Run checkProcedureProgress.py at any time to see progress
+           DONE / PENDING for each proc and function.
+           [S] = DBA schema synonym exists in MSSQL for that function.
+
+  Step 32: Test each procedure and function in SQL Server before production
+
+  Step 33: Run exportProcedures.py → generates create_procedures.sql
+           Connects to SQL Server. Exports finished procedures/functions.
+
+  Step 34: Run create_procedures.sql in SSMS on production server
+
+===========================================================================
+  PHASE 9 - SYNONYM SETUP (DBA SCHEMA BRIDGE)
+===========================================================================
+
+  WHY: PowerBuilder DataWindows call functions as DBA.functionname() because
+  that is how SQLA stores them. In MSSQL, CREATE FUNCTION creates them in
+  dbo. Without synonyms, all DBA.functionname() calls fail on SQL Server.
+
+  Step 35: Create DBA schema in SQL Server (once):
+             CREATE SCHEMA DBA;
+
+  Step 36: For each migrated function, create a synonym:
+             CREATE SYNONYM DBA.functionname FOR dbo.functionname;
+           Repeat for every function.
+
+  Step 37: Verify synonym coverage:
+           Run checkProcedureProgress.py
+           Every function should show [x][S] (done + synonym exists).
+           NOTE: Stored procedures do NOT need synonyms.
+
+===========================================================================
+  PHASE 10 - POWERBUILDER DATAWINDOW MIGRATION
+===========================================================================
+
+  Step 38: Export PBL to .srd files
+           In PB IDE: right-click PBL → Export → save .srd files to
+           Powerbuilder\<pblname>\ directory.
+
+  Step 39: Run batch syntax converter:
+             python Powerbuilder\convertSQLASyntax.py
+           Converts retrieve= blocks only. Dual-DB safe conversions:
+             IF expr THEN...ENDIF    → CASE WHEN expr THEN...END
+             IFNULL(x, y, z)         → CASE WHEN x IS NULL THEN y ELSE z END
+             string(x)               → CAST(x AS VARCHAR(50))
+             ||                      → +
+             length(x)               → LEN(x)
+             locate(src, pat)        → CHARINDEX(pat, src)
+             today()                 → GETDATE()
+           Backs up each file as .srd.bak before modifying.
+
+  Step 40: Fix forward alias references manually or with a targeted script
+           SQLA: SELECT expr AS alias, alias+1 AS next  -- legal
+           MSSQL: forward alias not allowed in same SELECT
+           Solution: restructure using subquery, CTE, or SQL Server view.
+
+  Step 41: Run addDBAPrefix.py to prefix function calls:
+             python Powerbuilder\addDBAPrefix.py
+           Reads DBA synonym list from SQL Server (Phase 9 must be done).
+           functionname(       → DBA.functionname(
+           dbo.functionname(   → DBA.functionname(
+           DBA.functionname(   → left alone
+
+  Step 42: Import .srd files back into PowerBuilder
+           In PB IDE: right-click PBL → Import → select modified .srd files.
+           Rebuild and test against SQL Server connection.
+
+  Step 43: Switch app to SQL Server for testing:
+             python toggle_catch22.py
+           Run again to switch back to SQL Anywhere.
+
+===========================================================================
+  APPENDIX - CONNECTION STRINGS USED IN ALL SCRIPTS
+===========================================================================
+
+  SQLA source:
+    DRIVER={SQL Anywhere 17}
+    HOST=192.168.250.34
+    SERVER=Emmitt
+    DATABASE=Smith
+    UID=dba
+    PWD=sql34
+
+  MSSQL target:
+    DRIVER={ODBC Driver 17 for SQL Server}
+    SERVER=LOOP-DB01
+    DATABASE=Loop-Loc_v1
+    Trusted_Connection=yes
+
+===========================================================================
+  APPENDIX - SCRIPT REFERENCE (in order of use)
+===========================================================================
+
+  tables.py              Extract table DDL from SQLA → create_tables.sql
+  compareTables.py       Diff schema SQLA vs MSSQL
+  alterTables.py         Generate ALTER TABLE for missing columns → alter_tables.sql
+  allTableTransfer.py    Copy all data SQLA → MSSQL
+  failedTableTransfer.py Re-run failed tables from last migration log
+  rowCountValidation.py  Compare row counts SQLA vs MSSQL
+  fkConstraints.py       Extract FK relationships from SQLA → fk_constraints.sql
+  migrateUsers.py        Generate user scripts → create_users.sql
+  extractViews.py        Extract view defs from SQLA → sqla_views_source.sql
+  checkViewProgress.py   Compare views SQLA vs MSSQL
+  exportViews.py         Deploy create_views.sql to SQL Server
+  extractTriggers.py     Extract trigger defs from SQLA → sqla_triggers_source.sql
+  checkTriggerProgress.py Compare triggers SQLA vs MSSQL
+  exportTriggers.py      Deploy create_triggers.sql to SQL Server
+  extractProcedures.py   Extract proc/function defs from SQLA → sqla_procedures_source.sql
+  checkProcedureProgress.py Compare procs/functions SQLA vs MSSQL; check synonyms
+  exportProcedures.py    Deploy create_procedures.sql to SQL Server
+  toggle_catch22.py      Switch app ODBC DSN between SQLA and MSSQL
+  Powerbuilder\convertSQLASyntax.py  Batch-convert SQLA syntax in .srd files
+  Powerbuilder\addDBAPrefix.py       Prefix function calls with DBA. in .srd files
