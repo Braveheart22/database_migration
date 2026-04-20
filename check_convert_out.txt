@@ -1,0 +1,50 @@
+=== Block 1 CHANGES ===
+  - if ~"prep~".~"type~" = 'LN' then
+  + CASE WHEN ~"prep~".~"type~" = 'LN' then
+  - if ~"prep~".~"type~" = 'RA' then
+  + CASE WHEN ~"prep~".~"type~" = 'RA' then
+  - endif
+  + END
+  - endif
+  + END
+  - if prep.~"type~" <> 'LN' then
+  + CASE WHEN prep.~"type~" <> 'LN' then
+  - if len(coalesce(~"dealer~".~"tax_reseller_certificate~",'')) > 0 then
+  + CASE WHEN len(coalesce(~"dealer~".~"tax_reseller_certificate~",'')) > 0 then
+  - endif
+  + END
+  - if len(coalesce(~"dealer~".~"liner_tax_reseller_certificate~",'')) > 0 then
+  + CASE WHEN len(coalesce(~"dealer~".~"liner_tax_reseller_certificate~",'')) > 0 then
+  - endif
+  + END
+  - endif
+  + END
+  - ifnull(prep.alter_job,'',prep.alter_job) as alter_job,
+  + CASE WHEN (prep.alter_job) IS NULL THEN ('') ELSE (prep.alter_job) END as alter_job,
+  - select (if coalesce(warranty_header.liner_extended_warranty,'') in ('E','B') then 'Y'
+  + select (CASE WHEN coalesce(warranty_header.liner_extended_warranty,'') in ('E','B') then 'Y'
+  - else 'N' endif)
+  + else 'N' END)
+  - select (if count(*) > 0 then 'Y' else 'N' endif)
+  + select (CASE WHEN count(*) > 0 then 'Y' else 'N' END)
+
+
+=== CONVERTED dealer_depositrequired section ===
+		(
+				CASE WHEN ~"prep~".~"type~" = 'LN' then
+					coalesce(~"dealer~".~"liner_deposit_required~",'')
+				else
+					CASE WHEN ~"prep~".~"type~" = 'RA' then
+						coalesce(~"dealer~".~"ra_deposit_required~",'')
+					else
+						coalesce(~"dealer~".~"deposit_required~",'')
+					END
+				END
+			) as ~"dealer_depositrequired~" ,
+			(
+			select coalesce
+
+=== CONVERTED alter_job section ===
+ep~".~"ra_inspection_date~"  ,
+			CASE WHEN (prep.alter_job) IS NULL THEN ('') ELSE (prep.alter_job) END as alter_job,
+			~"prep~".~"billto_form75_doc

@@ -1,0 +1,25 @@
+  SELECT ~"prep_generational~".~"prep_id~",   
+         ~"prep_generational~".~"prep_id_original~",   
+         ~"prep_generational~".~"generation_number~",   
+		(
+			select	~"prep~".~"order_no~"
+			from ~"prep~"
+			where   ~"prep_generational~".~"prep_id_original~" = ~"prep~".~"prep_id~" 
+		) as ~"prep_order_no~" ,   
+         ~"prep_generational~".~"create_date~",   
+         ~"prep_generational~".~"create_user~",   
+         ~"prep_generational~".~"modified_date~",   
+         ~"prep_generational~".~"modified_user~",   
+         ~"prep_generational~".~"not_looploc_error~",   
+         ~"prep_generational~".~"give_quick_shipdate~",   
+         ~"prep_generational~".~"looploc_error~"  ,
+		(
+			select list( ~"p_g~".~"prep_id~")
+			from ~"prep_generational~" as ~"p_g~"
+			where ~"p_g~".~"prep_id_original~" =  ~"prep_generational~".~"prep_id_original~" and 
+					~"p_g~".~"prep_id~" <> ~"prep_generational~".~"prep_id~" and
+					~"prep_generational~".~"prep_id_original~" <> -1
+		) as ~"listalterered~",
+		('N') as  ~"only_give_3day_shipdate~"
+    FROM ~"prep_generational~"
+   WHERE ( ~"prep_generational~".~"prep_id~" = :al_prep_id ) 

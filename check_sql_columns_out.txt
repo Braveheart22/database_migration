@@ -1,0 +1,22 @@
+=== prep_file_location columns ===
+  prep_id                                  int
+  dtl_no                                   int
+  file                                     varchar
+  date_stored                              date
+  user_name                                varchar
+  destination_directory                    varchar
+  time_stored                              time
+  comments                                 varchar
+  is_photo                                 char
+  void_file                                char
+  to_be_reviewed                           char
+  file_processed                           char
+  forward_email_accounting                 char
+
+=== rtn_bluesheet_file columns ===
+  rtn_bluesheet_id                         int
+  dtl_no                                   int
+  file                                     varchar
+  destination_directory                    varchar
+  date_stored                              date
+  userid                                   varchar

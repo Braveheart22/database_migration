@@ -2,12 +2,12 @@
 
 Migrating a database from **SAP (Sybase) SQL Anywhere 9.0** to **Microsoft SQL Server 2025**
 
-| | Source | Target |
-|---|---|---|
-| Server | Emmitt | LOOP-DB01 |
-| Database | Smith | Loop-Loc_v1 |
-| ODBC Driver | SQL Anywhere 17 | ODBC Driver 17 for SQL Server |
-| Credentials | UID=dba / PWD=sql34 | Windows Authentication (Trusted_Connection) |
+|             | Source              | Target                                      |
+| ----------- | ------------------- | ------------------------------------------- |
+| Server      | Emmitt              | LOOP-DB01                                   |
+| Database    | Smith               | Loop-Loc_v1                                 |
+| ODBC Driver | SQL Anywhere 9.0    | ODBC Driver 18 for SQL Server               |
+| Credentials | UID=dba / PWD=????? | Windows Authentication (Trusted_Connection) |
 
 > **Note on "unloading" from SQL Anywhere:** All extraction is done by the Python scripts
 > in this repository connecting directly to SQLA via pyodbc. There is no separate SQLA
@@ -43,11 +43,11 @@ during the transition period.
 
 Set up these three DSNs in ODBC Data Source Administrator:
 
-| DSN Name | Driver | Points to |
-|---|---|---|
-| `Catch22` | (active one) | whichever DB the app is currently using |
-| `Catch22-MSSQL` | ODBC Driver 17 for SQL Server | LOOP-DB01 / Loop-Loc_v1 |
-| `Catch22-SQLA` | SQL Anywhere 17 | 192.168.250.34 / Smith |
+| DSN Name        | Driver                        | Points to                               |
+| --------------- | ----------------------------- | --------------------------------------- |
+| `Catch22`       | (active one)                  | whichever DB the app is currently using |
+| `Catch22-MSSQL` | ODBC Driver 17 for SQL Server | LOOP-DB01 / Loop-Loc_v1                 |
+| `Catch22-SQLA`  | SQL Anywhere 17               | 192.168.250.34 / Smith                  |
 
 Exactly one of `Catch22-MSSQL` or `Catch22-SQLA` should exist at any time (the "parked" one).
 To switch the app between databases, run:
@@ -91,6 +91,7 @@ print(dst.cursor().execute("SELECT @@VERSION").fetchone())
 **Goal:** Create an empty SQL Server database with all tables matching the SQL Anywhere schema.
 
 1. Drop and recreate the SQL Server database (clean slate):
+
    ```sql
    USE master;
    GO
@@ -121,7 +122,7 @@ print(dst.cursor().execute("SELECT @@VERSION").fetchone())
 
 ## PHASE 1A — SCHEMA REMEDIATION
 
-*Run only if Phase 1 Step 4 finds issues.*
+_Run only if Phase 1 Step 4 finds issues._
 
 5. Run `alterTables.py` → generates `alter_tables.sql`
    - Scans every table present in both databases
@@ -150,11 +151,11 @@ print(dst.cursor().execute("SELECT @@VERSION").fetchone())
     - Check the `Error` column to understand why each table failed
     - Common causes:
 
-      | Error code | Meaning |
-      |---|---|
-      | `42S22 Invalid column name` | Schema drift or wrong target database in connection string |
-      | `23000 PK violation` | Duplicate or NULL primary key in source data |
-      | `22007 datetime out of range` | Date value before 1753-01-01 in source data |
+      | Error code                    | Meaning                                                    |
+      | ----------------------------- | ---------------------------------------------------------- |
+      | `42S22 Invalid column name`   | Schema drift or wrong target database in connection string |
+      | `23000 PK violation`          | Duplicate or NULL primary key in source data               |
+      | `22007 datetime out of range` | Date value before 1753-01-01 in source data                |
 
     - Investigate and resolve the root cause
     - Run `failedTableTransfer.py` — automatically reads `FAILED` rows from the most recent
@@ -185,6 +186,7 @@ print(dst.cursor().execute("SELECT @@VERSION").fetchone())
       table (data integrity issue in source data)
 
 14. Set SQL Server to FULL recovery mode:
+
     ```sql
     ALTER DATABASE [Loop-Loc_v1] SET RECOVERY FULL;
     ```
@@ -219,16 +221,16 @@ print(dst.cursor().execute("SELECT @@VERSION").fetchone())
     - **Output is for reference only — will NOT run in SQL Server**
     - Key syntax differences to convert:
 
-      | SQL Anywhere | SQL Server T-SQL |
-      |---|---|
-      | `STRING(a, b, c)` | `CONCAT(a, b, c)` or `a + b + c` |
-      | `DATEFORMAT(d, fmt)` | `FORMAT(d, fmt)` or `CONVERT()` |
-      | `TODAY()` | `CAST(GETDATE() AS DATE)` |
-      | `NOW()` | `GETDATE()` |
-      | `MONTHS(d1, d2)` | `DATEDIFF(MONTH, d1, d2)` |
-      | `YEARS(d1, d2)` | `DATEDIFF(YEAR, d1, d2)` |
-      | `MOD(a, b)` | `a % b` |
-      | Backtick or double-quote identifiers | `[square brackets]` |
+      | SQL Anywhere                         | SQL Server T-SQL                 |
+      | ------------------------------------ | -------------------------------- |
+      | `STRING(a, b, c)`                    | `CONCAT(a, b, c)` or `a + b + c` |
+      | `DATEFORMAT(d, fmt)`                 | `FORMAT(d, fmt)` or `CONVERT()`  |
+      | `TODAY()`                            | `CAST(GETDATE() AS DATE)`        |
+      | `NOW()`                              | `GETDATE()`                      |
+      | `MONTHS(d1, d2)`                     | `DATEDIFF(MONTH, d1, d2)`        |
+      | `YEARS(d1, d2)`                      | `DATEDIFF(YEAR, d1, d2)`         |
+      | `MOD(a, b)`                          | `a % b`                          |
+      | Backtick or double-quote identifiers | `[square brackets]`              |
 
 20. Create `create_views.sql` containing the converted T-SQL `CREATE VIEW` statements
     - One `GO` between each view (the exporter splits on `GO`)
@@ -253,17 +255,17 @@ print(dst.cursor().execute("SELECT @@VERSION").fetchone())
 
 24. Convert triggers to T-SQL — key syntax differences:
 
-    | SQL Anywhere | SQL Server T-SQL |
-    |---|---|
-    | `BEFORE` trigger | `INSTEAD OF` trigger |
-    | `AFTER` trigger | `AFTER` trigger |
-    | `REFERENCING OLD AS old NEW AS new` | Uses `deleted` / `inserted` virtual tables |
-    | `old.column_name` | `deleted.column_name` |
-    | `new.column_name` | `inserted.column_name` |
-    | `FOR EACH ROW` | (remove — SQL Server triggers are set-based) |
-    | `IF...THEN...END IF` | `IF...BEGIN...END` |
-    | `NOW()`, `TODAY()` | `GETDATE()` |
-    | `\|\|` (string concat) | `+` |
+    | SQL Anywhere                        | SQL Server T-SQL                             |
+    | ----------------------------------- | -------------------------------------------- |
+    | `BEFORE` trigger                    | `INSTEAD OF` trigger                         |
+    | `AFTER` trigger                     | `AFTER` trigger                              |
+    | `REFERENCING OLD AS old NEW AS new` | Uses `deleted` / `inserted` virtual tables   |
+    | `old.column_name`                   | `deleted.column_name`                        |
+    | `new.column_name`                   | `inserted.column_name`                       |
+    | `FOR EACH ROW`                      | (remove — SQL Server triggers are set-based) |
+    | `IF...THEN...END IF`                | `IF...BEGIN...END`                           |
+    | `NOW()`, `TODAY()`                  | `GETDATE()`                                  |
+    | `\|\|` (string concat)              | `+`                                          |
 
     > **Note:** `BEFORE` triggers in SQLA can modify column values before the row is written.
     > SQL Server `INSTEAD OF` triggers replace the entire DML operation — review each `BEFORE`
@@ -290,15 +292,15 @@ print(dst.cursor().execute("SELECT @@VERSION").fetchone())
 
 30. Convert procedures and functions to T-SQL — key syntax differences:
 
-    | SQL Anywhere | SQL Server T-SQL |
-    |---|---|
-    | `IF...THEN...END IF` | `IF...BEGIN...END` |
-    | `LOOP...END LOOP` | `WHILE 1=1 BEGIN...END` |
-    | `LEAVE` | `BREAK` |
-    | `CALL proc()` | `EXEC proc` |
-    | `SIGNAL` | `THROW` / `RAISERROR` |
-    | `NOW()`, `TODAY()` | `GETDATE()` |
-    | `\|\|` (string concat) | `+` |
+    | SQL Anywhere                  | SQL Server T-SQL                                         |
+    | ----------------------------- | -------------------------------------------------------- |
+    | `IF...THEN...END IF`          | `IF...BEGIN...END`                                       |
+    | `LOOP...END LOOP`             | `WHILE 1=1 BEGIN...END`                                  |
+    | `LEAVE`                       | `BREAK`                                                  |
+    | `CALL proc()`                 | `EXEC proc`                                              |
+    | `SIGNAL`                      | `THROW` / `RAISERROR`                                    |
+    | `NOW()`, `TODAY()`            | `GETDATE()`                                              |
+    | `\|\|` (string concat)        | `+`                                                      |
     | `CREATE FUNCTION ... RETURNS` | Same in T-SQL; functions land in `dbo` schema by default |
 
     > **Important:** In SQLA, functions are owned by the `DBA` user and called as
@@ -332,15 +334,19 @@ pointing to its `dbo` counterpart. Both databases then respond correctly to
 `DBA.functionname()` calls without any changes to the DataWindow SQL.
 
 35. Create the DBA schema in SQL Server (one-time):
+
     ```sql
     CREATE SCHEMA DBA;
     ```
 
 36. For each migrated function, create a synonym:
+
     ```sql
     CREATE SYNONYM DBA.functionname FOR dbo.functionname;
     ```
+
     Repeat for every function. Example:
+
     ```sql
     CREATE SYNONYM DBA.dbf_get_price        FOR dbo.dbf_get_price;
     CREATE SYNONYM DBA.dbf_dealer_discount   FOR dbo.dbf_dealer_discount;
@@ -368,6 +374,7 @@ MSSQL simultaneously, so the app continues working on SQLA during the transition
 ### Step A — Export PBLs to .srd files
 
 In PowerBuilder IDE:
+
 1. Right-click the PBL in the System Tree → **Export**
 2. Export all DataWindow objects as `.srd` files to a working directory
 3. For the `llPrep` PBL, export to `Powerbuilder\llPrep\`
@@ -383,15 +390,15 @@ python Powerbuilder\convertSQLASyntax.py
 - Only modifies `retrieve=` blocks (leaves all other PB attributes untouched)
 - Conversions performed (all dual-DB safe):
 
-  | SQLA syntax | T-SQL equivalent |
-  |---|---|
-  | `IF expr THEN ... ENDIF` | `CASE WHEN expr THEN ... END` |
-  | `IFNULL(x, y, z)` | `CASE WHEN x IS NULL THEN y ELSE z END` |
-  | `string(x)` | `CAST(x AS VARCHAR(50))` |
-  | `\|\|` | `+` |
-  | `length(x)` | `LEN(x)` |
-  | `locate(src, pat)` | `CHARINDEX(pat, src)` |
-  | `today()` | `GETDATE()` |
+  | SQLA syntax              | T-SQL equivalent                        |
+  | ------------------------ | --------------------------------------- |
+  | `IF expr THEN ... ENDIF` | `CASE WHEN expr THEN ... END`           |
+  | `IFNULL(x, y, z)`        | `CASE WHEN x IS NULL THEN y ELSE z END` |
+  | `string(x)`              | `CAST(x AS VARCHAR(50))`                |
+  | `\|\|`                   | `+`                                     |
+  | `length(x)`              | `LEN(x)`                                |
+  | `locate(src, pat)`       | `CHARINDEX(pat, src)`                   |
+  | `today()`                | `GETDATE()`                             |
 
 - Backs up each file as `.srd.bak` before modifying
 - Run `python Powerbuilder\convertSQLASyntax.py --help` for usage
@@ -402,6 +409,7 @@ SQLA allows referencing a `SELECT`-list alias in the same `SELECT` (forward alia
 SQL Server does not.
 
 For each DataWindow with this pattern, the SQL must be restructured using either:
+
 - A **subquery** or **CTE** that computes the aliased expression once, then references it
 - A **SQL Server view** wrapping the logic (use this if PB's import parser rejects CTEs)
 
@@ -444,10 +452,10 @@ Run again to switch back to SQL Anywhere.
 
 ### Known limitations (dual-DB)
 
-| DataWindow | Issue | Status |
-|---|---|---|
-| `d_prep_generational` | Uses `list()` aggregate — works on SQLA, not on MSSQL | Acceptable for now; fix when migrating that feature to MSSQL |
-| DWs in non-llPrep PBLs | 11 remaining MSSQL errors in other PBLs not yet exported | See `Powerbuilder\pb_migration_notes.md` for details |
+| DataWindow             | Issue                                                    | Status                                                       |
+| ---------------------- | -------------------------------------------------------- | ------------------------------------------------------------ |
+| `d_prep_generational`  | Uses `list()` aggregate — works on SQLA, not on MSSQL    | Acceptable for now; fix when migrating that feature to MSSQL |
+| DWs in non-llPrep PBLs | 11 remaining MSSQL errors in other PBLs not yet exported | See `Powerbuilder\pb_migration_notes.md` for details         |
 
 ---
 
@@ -457,6 +465,7 @@ All scripts hard-code the following connection strings. If the server names, dat
 or credentials change, update these in each script.
 
 **SQL Anywhere (source):**
+
 ```python
 pyodbc.connect(
     'DRIVER={SQL Anywhere 17};'
@@ -469,6 +478,7 @@ pyodbc.connect(
 ```
 
 **SQL Server (target):**
+
 ```python
 pyodbc.connect(
     'DRIVER={ODBC Driver 17 for SQL Server};'
@@ -482,25 +492,25 @@ pyodbc.connect(
 
 ## APPENDIX — Script reference
 
-| Script | What it does | Reads | Writes |
-|---|---|---|---|
-| `tables.py` | Extract table DDL from SQLA | SQLA | `create_tables.sql` |
-| `compareTables.py` | Diff schema between SQLA and MSSQL | SQLA + MSSQL | console |
-| `alterTables.py` | Generate ALTER TABLE for missing columns | SQLA + MSSQL | `alter_tables.sql` |
-| `allTableTransfer.py` | Copy all table data SQLA → MSSQL | SQLA | MSSQL + `migration_log_*.csv` |
-| `failedTableTransfer.py` | Re-run failed tables from last migration log | SQLA + last `migration_log_*.csv` | MSSQL + new `migration_log_*.csv` |
-| `rowCountValidation.py` | Compare row counts SQLA vs MSSQL | SQLA + MSSQL | `validation_log_*.csv` |
-| `fkConstraints.py` | Extract FK relationships from SQLA | SQLA | `fk_constraints.sql` |
-| `migrateUsers.py` | Generate user/login scripts from SQLA | SQLA | `create_users.sql` |
-| `extractViews.py` | Extract view definitions from SQLA | SQLA | `sqla_views_source.sql` |
-| `checkViewProgress.py` | Compare views SQLA vs MSSQL | SQLA + MSSQL | console |
-| `exportViews.py` | Deploy views to SQL Server | `create_views.sql` | MSSQL |
-| `extractTriggers.py` | Extract trigger definitions from SQLA | SQLA | `sqla_triggers_source.sql` |
-| `checkTriggerProgress.py` | Compare triggers SQLA vs MSSQL | SQLA + MSSQL | console |
-| `exportTriggers.py` | Deploy triggers to SQL Server | `create_triggers.sql` | MSSQL |
-| `extractProcedures.py` | Extract procedure/function definitions from SQLA | SQLA | `sqla_procedures_source.sql` |
-| `checkProcedureProgress.py` | Compare procs/functions SQLA vs MSSQL; check synonyms | SQLA + MSSQL | console |
-| `exportProcedures.py` | Deploy procedures/functions to SQL Server | `create_procedures.sql` | MSSQL |
-| `toggle_catch22.py` | Switch app ODBC DSN between SQLA and MSSQL | Windows registry | Windows registry |
-| `Powerbuilder\convertSQLASyntax.py` | Batch-convert SQLA syntax in .srd files | `.srd` files | `.srd` files (in-place) |
-| `Powerbuilder\addDBAPrefix.py` | Prefix function calls with DBA. in .srd files | MSSQL + `.srd` files | `.srd` files (in-place) |
+| Script                              | What it does                                          | Reads                             | Writes                            |
+| ----------------------------------- | ----------------------------------------------------- | --------------------------------- | --------------------------------- |
+| `tables.py`                         | Extract table DDL from SQLA                           | SQLA                              | `create_tables.sql`               |
+| `compareTables.py`                  | Diff schema between SQLA and MSSQL                    | SQLA + MSSQL                      | console                           |
+| `alterTables.py`                    | Generate ALTER TABLE for missing columns              | SQLA + MSSQL                      | `alter_tables.sql`                |
+| `allTableTransfer.py`               | Copy all table data SQLA → MSSQL                      | SQLA                              | MSSQL + `migration_log_*.csv`     |
+| `failedTableTransfer.py`            | Re-run failed tables from last migration log          | SQLA + last `migration_log_*.csv` | MSSQL + new `migration_log_*.csv` |
+| `rowCountValidation.py`             | Compare row counts SQLA vs MSSQL                      | SQLA + MSSQL                      | `validation_log_*.csv`            |
+| `fkConstraints.py`                  | Extract FK relationships from SQLA                    | SQLA                              | `fk_constraints.sql`              |
+| `migrateUsers.py`                   | Generate user/login scripts from SQLA                 | SQLA                              | `create_users.sql`                |
+| `extractViews.py`                   | Extract view definitions from SQLA                    | SQLA                              | `sqla_views_source.sql`           |
+| `checkViewProgress.py`              | Compare views SQLA vs MSSQL                           | SQLA + MSSQL                      | console                           |
+| `exportViews.py`                    | Deploy views to SQL Server                            | `create_views.sql`                | MSSQL                             |
+| `extractTriggers.py`                | Extract trigger definitions from SQLA                 | SQLA                              | `sqla_triggers_source.sql`        |
+| `checkTriggerProgress.py`           | Compare triggers SQLA vs MSSQL                        | SQLA + MSSQL                      | console                           |
+| `exportTriggers.py`                 | Deploy triggers to SQL Server                         | `create_triggers.sql`             | MSSQL                             |
+| `extractProcedures.py`              | Extract procedure/function definitions from SQLA      | SQLA                              | `sqla_procedures_source.sql`      |
+| `checkProcedureProgress.py`         | Compare procs/functions SQLA vs MSSQL; check synonyms | SQLA + MSSQL                      | console                           |
+| `exportProcedures.py`               | Deploy procedures/functions to SQL Server             | `create_procedures.sql`           | MSSQL                             |
+| `toggle_catch22.py`                 | Switch app ODBC DSN between SQLA and MSSQL            | Windows registry                  | Windows registry                  |
+| `Powerbuilder\convertSQLASyntax.py` | Batch-convert SQLA syntax in .srd files               | `.srd` files                      | `.srd` files (in-place)           |
+| `Powerbuilder\addDBAPrefix.py`      | Prefix function calls with DBA. in .srd files         | MSSQL + `.srd` files              | `.srd` files (in-place)           |

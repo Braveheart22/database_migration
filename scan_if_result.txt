@@ -1,0 +1,25 @@
+Files with SQL-syntax issues: 24
+d_cutbleep_tag_head.srd: IF..THEN
+d_hrdw_sqft_vs_units.srd: IF..THEN
+d_hrdw_sqft_vs_units_old.srd: IF..THEN
+d_imageloc_prep_product_id_select.srd: IF..THEN
+d_liner_product.srd: IF..THEN
+d_liner_product_ms.srd: IF..THEN
+d_prep_admin_pricing.srd: IF..THEN
+d_prep_documents.srd: IF..THEN, IFNULL3
+d_prep_header.srd: IF..THEN, IFNULL3
+d_prep_header_2018_8_23.srd: IF..THEN, IFNULL3
+d_prep_multipurpose_header.srd: IF..THEN
+d_prep_multipurpose_is_po_rule.srd: IF..THEN
+d_prep_replacement.srd: IF..THEN
+d_prep_rules.srd: IF..THEN
+d_prepping_measures.srd: IF..THEN
+d_quote_detail.srd: IF..THEN
+d_quote_detail_broken.srd: IF..THEN
+d_quote_detail_shared.srd: IF..THEN
+d_quotes_reactivate.srd: IF..THEN
+d_select_quote.srd: IF..THEN
+d_select_quote_all.srd: IF..THEN
+d_select_quotes_bluedot.srd: IF..THEN
+d_stock_list_by_product.srd: IF..THEN
+d_view_prep_shipping_fees_dealer.srd: IF..THEN

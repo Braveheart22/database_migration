@@ -5,7 +5,11 @@
       "Bash(powershell -File:*)",
       "Bash(git add:*)",
       "Bash(git commit:*)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(powershell.exe:*)",
+      "Bash(/c/Users/John.LOOP/AppData/Local/Programs/Python/Launcher/py.exe:*)",
+      "WebFetch(domain:support.claude.com)",
+      "Bash(py:*)"
     ]
   }
 }

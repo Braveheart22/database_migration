@@ -1,0 +1,49 @@
+  SELECT ~"prep_manf_admin~".~"prep_id~",   
+         ~"prep_manf_admin~".~"quote_no~",   
+         ~"prep_manf_admin~".~"admin_discount_type~",   
+         ~"prep_manf_admin~".~"admin_no_charge_net~",   
+         ~"prep_manf_admin~".~"admin_no_charge_freight~",   
+         ~"prep_manf_admin~".~"admin_description~",   
+         ~"prep_manf_admin~".~"admin_discount~",   
+         ~"prep_manf_admin~".~"deposit_required~",   
+         ~"prep_manf_admin~".~"deposit_flat_amount~",   
+         ~"prep_manf_admin~".~"deposit_min_pct~",   
+         ~"prep_manf_admin~".~"deposit_source~",   
+         ~"prep_manf_admin~".~"deposit_max_pct~",   
+         ~"prep_manf_admin~".~"admin_description_dept~",   
+         ~"prep_manf_admin~".~"admin_description_reason~",   
+         ~"prep_manf_admin~".~"admin_description_as_per~",   
+         ~"prep_manf_admin~".~"admin_description_date~",   
+         ~"prep_manf_admin~".~"admin_description_person~",   
+         ~"prep_manf_admin~".~"deposit_override~",
+			Coalesce(
+						(select coalesce(departments.department_type,'')
+							from departments
+							where departments.department_short=~"prep_manf_admin~".~"admin_description_dept~")
+				,'O') as department_type ,
+			(select coalesce(warranty_type,'')
+			 from prep_ra_hardware
+			 where prep_ra_hardware.prep_id = :al_prep_id) as warr_type,
+
+			(select prep.billto_Dealer_code
+			from prep
+			where prep.prep_id = prep_manf_admin.prep_id) as billto_dealer_code,
+
+			(select dealer.no_print_freight
+			from dealer
+			where dealer.dealer_code =  billto_dealer_code) as noprintfreight,
+			DBA.dbf_can_freight_be_calculated(prep_manf_admin.prep_id, prep_manf_admin.quote_no)  as can_freight_be_calculated ,
+
+			(select prep.~"type~"
+			from prep
+			where prep.prep_id = prep_manf_admin.prep_id) as preptype,
+			'' as additional_markdown_groups,
+			~"prep_manf_admin~".~"dept_markdowns~",
+			~"prep_manf_admin~".~"giftcard~",
+			prep_manf_admin.fixed_freight,
+			~"prep_manf_admin~".~"tobedetermined~",
+			~"prep_manf_admin~".~"deposit_override_2~",
+			~"prep_manf_admin~".~"admin_description_dept2~"
+
+    FROM ~"prep_manf_admin~"  
+   WHERE ~"prep_manf_admin~".~"prep_id~" = :al_prep_id    

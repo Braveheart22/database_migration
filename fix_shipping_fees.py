@@ -12,8 +12,11 @@ Also converts:
 import re
 
 filepath = r'C:\Database\Catch22 Unload\Migration\Powerbuilder\llPrep\d_view_prep_shipping_fees_dealer.srd'
+backup = filepath + '.fix.bak'
 
-with open(filepath, 'r', encoding='utf-16', errors='replace') as f:
+# Read from the original backup if it exists, so we always rewrite from clean source
+source = backup if __import__('os').path.exists(backup) else filepath
+with open(source, 'r', encoding='utf-16', errors='replace') as f:
     content = f.read()
 
 retrieve_pat = re.compile(r'(retrieve=")(.*?)(?<!~)(")', re.DOTALL | re.IGNORECASE)
@@ -36,7 +39,6 @@ else:
 # The 5 DW columns (positional order from original): prep_id, shippingcost, centsubstring, costshow, SHOWTEXT
 new_sql = f"""
 WITH ShipBase AS (
-    -- Drop charge: applies when shipto_code = 'Drop' and term_id <> 8
     SELECT
         ~"prep~".~"prep_id~",
         CAST(
@@ -57,7 +59,6 @@ WITH ShipBase AS (
 
     UNION
 
-    -- Signature charge: applies for UPS/specific carriers with a SIGNATURE rule
     SELECT
         ~"prep~".~"prep_id~",
         CAST(
@@ -110,9 +111,9 @@ FROM WithCost"""
 
 new_content = content[:m.start(2)] + new_sql + content[m.end(2):]
 
-backup = filepath + '.fix.bak'
-with open(backup, 'w', encoding='utf-16') as f:
-    f.write(content)
+if not __import__('os').path.exists(backup):
+    with open(backup, 'w', encoding='utf-16') as f:
+        f.write(content)
 with open(filepath, 'w', encoding='utf-16') as f:
     f.write(new_content)
 

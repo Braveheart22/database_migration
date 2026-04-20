@@ -1,0 +1,2 @@
+Fixed 1 occurrence(s). Backup: C:\Database\Catch22 Unload\Migration\Powerbuilder\llPrep\d_quote_admin.srd.bak
+Written: C:\Database\Catch22 Unload\Migration\Powerbuilder\llPrep\d_quote_admin.srd

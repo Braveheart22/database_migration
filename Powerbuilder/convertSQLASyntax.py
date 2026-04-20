@@ -135,6 +135,11 @@ def replace_length(sql):
     return re.sub(r'\blength\s*\(', 'LEN(', sql, flags=re.IGNORECASE)
 
 
+def replace_today(sql):
+    """Replace SQLA today() with SQL Server GETDATE()."""
+    return re.sub(r'\btoday\s*\(\s*\)', 'GETDATE()', sql, flags=re.IGNORECASE)
+
+
 def replace_locate(sql):
     """Replace SQLA locate(source, pattern) with SQL Server CHARINDEX(pattern, source).
     SQLA LOCATE(str_to_search, pattern) — args are reversed vs SQL Server CHARINDEX."""
@@ -187,8 +192,9 @@ def replace_if_then_endif(sql):
       IF a THEN x ELSE IF b THEN y ELSE z ENDIF ENDIF
       => CASE WHEN a THEN x ELSE CASE WHEN b THEN y ELSE z END END
     """
-    # Replace 'if' not followed by '(' (avoids PB expression if() calls)
-    sql = re.sub(r'\bif\b(?!\s*\()', 'CASE WHEN', sql, flags=re.IGNORECASE)
+    # Replace 'if' not immediately followed by '(' (avoids PB expression if() calls like if(cond,a,b))
+    # Note: 'if (cond) then' with a space IS valid SQL and should be converted.
+    sql = re.sub(r'\bif\b(?!\()', 'CASE WHEN', sql, flags=re.IGNORECASE)
     # 'then' and 'else' keywords stay as-is — they are valid in CASE expressions
     sql = re.sub(r'\bendif\b', 'END', sql, flags=re.IGNORECASE)
     return sql
@@ -201,6 +207,7 @@ def transform_sql(sql):
     sql = replace_concat_pipes(sql)
     sql = replace_length(sql)
     sql = replace_locate(sql)
+    sql = replace_today(sql)
     return sql
 
 

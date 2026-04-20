@@ -9,11 +9,16 @@ MSSQL stores them separately:
   type = 'P'  -- stored procedure
   type = 'FN' -- scalar function
   type = 'IF' -- inline table-valued function
-  type = 'TF' -- multi-statement table-valued function1
+  type = 'TF' -- multi-statement table-valued function
+
+Also checks whether a DBA schema synonym exists in MSSQL for each function.
+Synonyms allow DataWindow SQL to call DBA.functionname() on both SQLA and
+MSSQL without modification.
 
 Output:
-  - DONE   : procedure/function exists in MSSQL
-  - PENDING: procedure/function exists in SQLA but not yet in MSSQL
+  - DONE      : procedure/function exists in MSSQL
+  - PENDING   : procedure/function exists in SQLA but not yet in MSSQL
+  - [S]       : DBA synonym exists in MSSQL for that function
   - Summary counts
 """
 
@@ -60,8 +65,20 @@ def get_mssql_procedures(conn):
     """)
     return {row[0] for row in cur.fetchall()}
 
+def get_mssql_synonyms(conn):
+    """Return names of all synonyms in the DBA schema."""
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT name
+        FROM sys.synonyms
+        WHERE SCHEMA_NAME(schema_id) = 'DBA'
+        ORDER BY name
+    """)
+    return {row[0] for row in cur.fetchall()}
+
 sqla_procs  = get_sqla_procedures(src)
 mssql_procs = get_mssql_procedures(dst)
+mssql_syns  = get_mssql_synonyms(dst)
 
 src.close()
 dst.close()
@@ -73,27 +90,33 @@ done    = sorted(sqla_procs & mssql_procs)
 pending = sorted(sqla_procs - mssql_procs)
 extra   = sorted(mssql_procs - sqla_procs)
 
+syn_done    = len(mssql_syns & sqla_procs)
+
 print(f"SQLA procedures/functions  : {len(sqla_procs)}")
 print(f"MSSQL procedures/functions : {len(mssql_procs)}")
+print(f"DBA synonyms               : {len(mssql_syns)}")
 print()
 
 if done:
     print(f"-- DONE ({len(done)}) --")
     for name in done:
-        print(f"  [x] {name}")
+        syn = '[S]' if name in mssql_syns else '   '
+        print(f"  [x] {syn} {name}")
     print()
 
 if pending:
     print(f"-- PENDING ({len(pending)}) --")
     for name in pending:
-        print(f"  [ ] {name}")
+        print(f"  [ ]     {name}")
     print()
 
 if extra:
     print(f"-- EXTRA in MSSQL (not in SQLA) ({len(extra)}) --")
     for name in extra:
-        print(f"      {name}")
+        syn = '[S]' if name in mssql_syns else '   '
+        print(f"      {syn} {name}")
     print()
 
 pct = int(len(done) / len(sqla_procs) * 100) if sqla_procs else 0
-print(f"Progress: {len(done)} / {len(sqla_procs)} ({pct}%)")
+print(f"Progress : {len(done)} / {len(sqla_procs)} ({pct}%)")
+print(f"Synonyms : {syn_done} / {len(sqla_procs)} have DBA synonym")
