@@ -213,115 +213,42 @@ _Run only if Phase 1 Step 4 finds issues._
 
 ---
 
-## PHASE 6 — VIEW MIGRATION
+## PHASE 6 — DEPLOY CONVERTED DATABASE OBJECTS
 
-19. Run `extractViews.py` → generates `sqla_views_source.sql`
-    - Extracts all DBA-owned view definitions from SQL Anywhere (`SYS.SYSTABLE` where
-      `table_type = 'VIEW'`)
-    - **Output is for reference only — will NOT run in SQL Server**
-    - Key syntax differences to convert:
+> **The conversion of views, triggers, procedures, and functions from SQLA dialect to T-SQL
+> was done once during initial migration development.** The results are captured in
+> `create_views.sql`, `create_triggers.sql`, and `create_procedures.sql` in this repository.
+> This phase deploys those already-converted objects to the new SQL Server database.
+>
+> If a new object needs to be converted or an existing one revised, see the
+> [Conversion Reference](#appendix--conversion-reference-one-time-work-already-complete)
+> appendix.
 
-      | SQL Anywhere                         | SQL Server T-SQL                 |
-      | ------------------------------------ | -------------------------------- |
-      | `STRING(a, b, c)`                    | `CONCAT(a, b, c)` or `a + b + c` |
-      | `DATEFORMAT(d, fmt)`                 | `FORMAT(d, fmt)` or `CONVERT()`  |
-      | `TODAY()`                            | `CAST(GETDATE() AS DATE)`        |
-      | `NOW()`                              | `GETDATE()`                      |
-      | `MONTHS(d1, d2)`                     | `DATEDIFF(MONTH, d1, d2)`        |
-      | `YEARS(d1, d2)`                      | `DATEDIFF(YEAR, d1, d2)`         |
-      | `MOD(a, b)`                          | `a % b`                          |
-      | Backtick or double-quote identifiers | `[square brackets]`              |
+### Views
 
-20. Create `create_views.sql` containing the converted T-SQL `CREATE VIEW` statements
-    - One `GO` between each view (the exporter splits on `GO`)
-    - Views that depend on other views must appear after the views they reference
-
-21. Run `checkViewProgress.py` at any time to see DONE vs PENDING views
-    - Compares DBA-owned views in SQLA against `sys.objects WHERE type = 'V'` in MSSQL
-
-22. Run `exportViews.py` to deploy views to SQL Server
-    - Reads `create_views.sql`
-    - Skips views that already exist in MSSQL (`[SKIP]`)
+19. Run `exportViews.py` to deploy all views
+    - Reads `create_views.sql` from the repository and applies it to SQL Server
+    - Skips views that already exist (`[SKIP]`)
     - Reports `[OK]` or `[ERROR]` for each view
 
----
+### Triggers
 
-## PHASE 7 — TRIGGER MIGRATION
+20. Run `create_triggers.sql` in SSMS
 
-23. Run `extractTriggers.py` → generates `sqla_triggers_source.sql`
-    - Extracts all DBA-owned trigger definitions from SQL Anywhere
-    - **Output is for reference only — will NOT run in SQL Server**
-    - `BEFORE` triggers are flagged with a `WARNING` comment
+    > To regenerate this file from the current dev/test SQL Server before deploying
+    > (e.g., if triggers have been updated since the last commit):
+    > `python exportTriggers.py` → overwrites `create_triggers.sql`, then run it in SSMS
 
-24. Convert triggers to T-SQL — key syntax differences:
+### Stored Procedures and Functions
 
-    | SQL Anywhere                        | SQL Server T-SQL                             |
-    | ----------------------------------- | -------------------------------------------- |
-    | `BEFORE` trigger                    | `INSTEAD OF` trigger                         |
-    | `AFTER` trigger                     | `AFTER` trigger                              |
-    | `REFERENCING OLD AS old NEW AS new` | Uses `deleted` / `inserted` virtual tables   |
-    | `old.column_name`                   | `deleted.column_name`                        |
-    | `new.column_name`                   | `inserted.column_name`                       |
-    | `FOR EACH ROW`                      | (remove — SQL Server triggers are set-based) |
-    | `IF...THEN...END IF`                | `IF...BEGIN...END`                           |
-    | `NOW()`, `TODAY()`                  | `GETDATE()`                                  |
-    | `\|\|` (string concat)              | `+`                                          |
+21. Run `create_procedures.sql` in SSMS
 
-    > **Note:** `BEFORE` triggers in SQLA can modify column values before the row is written.
-    > SQL Server `INSTEAD OF` triggers replace the entire DML operation — review each `BEFORE`
-    > trigger carefully before converting.
-
-25. Run `checkTriggerProgress.py` at any time to see DONE vs PENDING triggers
-    - `BEFORE` triggers are flagged in the PENDING list as a reminder
-
-26. Test each trigger in SQL Server before deploying to production
-
-27. Run `exportTriggers.py` → generates `create_triggers.sql`
-    - Connects to SQL Server (not SQL Anywhere)
-    - Exports all finished T-SQL triggers for go-live deployment
-
-28. Run `create_triggers.sql` in SSMS on the production server
+    > To regenerate this file from the current dev/test SQL Server before deploying:
+    > `python exportProcedures.py` → overwrites `create_procedures.sql`, then run it in SSMS
 
 ---
 
-## PHASE 8 — STORED PROCEDURE & FUNCTION MIGRATION
-
-29. Run `extractProcedures.py` → generates `sqla_procedures_source.sql`
-    - Reads all DBA-owned stored procedures and functions from `SYS.SYSPROCEDURE`
-    - **Output is for reference only — will NOT run in SQL Server**
-
-30. Convert procedures and functions to T-SQL — key syntax differences:
-
-    | SQL Anywhere                  | SQL Server T-SQL                                         |
-    | ----------------------------- | -------------------------------------------------------- |
-    | `IF...THEN...END IF`          | `IF...BEGIN...END`                                       |
-    | `LOOP...END LOOP`             | `WHILE 1=1 BEGIN...END`                                  |
-    | `LEAVE`                       | `BREAK`                                                  |
-    | `CALL proc()`                 | `EXEC proc`                                              |
-    | `SIGNAL`                      | `THROW` / `RAISERROR`                                    |
-    | `NOW()`, `TODAY()`            | `GETDATE()`                                              |
-    | `\|\|` (string concat)        | `+`                                                      |
-    | `CREATE FUNCTION ... RETURNS` | Same in T-SQL; functions land in `dbo` schema by default |
-
-    > **Important:** In SQLA, functions are owned by the `DBA` user and called as
-    > `DBA.functionname()`. In MSSQL, `CREATE FUNCTION` creates them in the `dbo` schema.
-    > See Phase 9 (Synonyms) for how to bridge this difference.
-
-31. Run `checkProcedureProgress.py` at any time to see progress
-    - Shows DONE / PENDING for each procedure and function
-    - Shows `[S]` for each function that has a DBA schema synonym (see Phase 9)
-
-32. Test each procedure and function in SQL Server before deploying to production
-
-33. Run `exportProcedures.py` → generates `create_procedures.sql`
-    - Connects to SQL Server (not SQL Anywhere)
-    - Exports all finished T-SQL procedures and functions for go-live deployment
-
-34. Run `create_procedures.sql` in SSMS on the production server
-
----
-
-## PHASE 9 — SYNONYM SETUP (DBA Schema Bridge)
+## PHASE 7 — SYNONYM SETUP (DBA Schema Bridge)
 
 **Why synonyms are needed:**
 PowerBuilder DataWindow SQL calls user-defined functions as `DBA.functionname()` because
@@ -333,13 +260,13 @@ calls will fail on SQL Server.
 pointing to its `dbo` counterpart. Both databases then respond correctly to
 `DBA.functionname()` calls without any changes to the DataWindow SQL.
 
-35. Create the DBA schema in SQL Server (one-time):
+22. Create the DBA schema in SQL Server (one-time per database):
 
     ```sql
     CREATE SCHEMA DBA;
     ```
 
-36. For each migrated function, create a synonym:
+23. For each migrated function, create a synonym:
 
     ```sql
     CREATE SYNONYM DBA.functionname FOR dbo.functionname;
@@ -353,7 +280,7 @@ pointing to its `dbo` counterpart. Both databases then respond correctly to
     -- ... one line per function
     ```
 
-37. Verify synonym coverage with `checkProcedureProgress.py`
+24. Verify synonym coverage with `checkProcedureProgress.py`
     - Functions with a synonym show `[S]` in the output
     - Functions without a synonym show only `[x]` (DONE but no synonym)
     - Target: every function should have `[x][S]`
@@ -363,7 +290,7 @@ pointing to its `dbo` counterpart. Both databases then respond correctly to
 
 ---
 
-## PHASE 10 — POWERBUILDER DATAWINDOW MIGRATION
+## PHASE 8 — POWERBUILDER DATAWINDOW MIGRATION
 
 PowerBuilder DataWindows contain embedded SQL in `.srd` source files. Many use SQLA-specific
 syntax that must be converted to T-SQL before the application can connect to SQL Server.
@@ -418,7 +345,7 @@ batch conversion.
 
 ### Step D — Add DBA prefix to function calls
 
-After synonyms are set up (Phase 9), ensure all DataWindow SQL calls functions with the
+After synonyms are set up (Phase 7), ensure all DataWindow SQL calls functions with the
 `DBA.` prefix:
 
 ```
@@ -504,13 +431,99 @@ pyodbc.connect(
 | `migrateUsers.py`                   | Generate user/login scripts from SQLA                 | SQLA                              | `create_users.sql`                |
 | `extractViews.py`                   | Extract view definitions from SQLA                    | SQLA                              | `sqla_views_source.sql`           |
 | `checkViewProgress.py`              | Compare views SQLA vs MSSQL                           | SQLA + MSSQL                      | console                           |
-| `exportViews.py`                    | Deploy views to SQL Server                            | `create_views.sql`                | MSSQL                             |
-| `extractTriggers.py`                | Extract trigger definitions from SQLA                 | SQLA                              | `sqla_triggers_source.sql`        |
+| `exportViews.py`                    | Deploy `create_views.sql` to SQL Server               | `create_views.sql`                | MSSQL                             |
+| `extractTriggers.py`                | Extract trigger definitions from SQLA (conversion)    | SQLA                              | `sqla_triggers_source.sql`        |
 | `checkTriggerProgress.py`           | Compare triggers SQLA vs MSSQL                        | SQLA + MSSQL                      | console                           |
-| `exportTriggers.py`                 | Deploy triggers to SQL Server                         | `create_triggers.sql`             | MSSQL                             |
-| `extractProcedures.py`              | Extract procedure/function definitions from SQLA      | SQLA                              | `sqla_procedures_source.sql`      |
+| `exportTriggers.py`                 | Export finished T-SQL triggers from SQL Server        | MSSQL                             | `create_triggers.sql`             |
+| `extractProcedures.py`              | Extract procedure/function definitions from SQLA (conversion) | SQLA                      | `sqla_procedures_source.sql`      |
 | `checkProcedureProgress.py`         | Compare procs/functions SQLA vs MSSQL; check synonyms | SQLA + MSSQL                      | console                           |
-| `exportProcedures.py`               | Deploy procedures/functions to SQL Server             | `create_procedures.sql`           | MSSQL                             |
+| `exportProcedures.py`               | Export finished T-SQL procs/functions from SQL Server | MSSQL                             | `create_procedures.sql`           |
 | `toggle_catch22.py`                 | Switch app ODBC DSN between SQLA and MSSQL            | Windows registry                  | Windows registry                  |
 | `Powerbuilder\convertSQLASyntax.py` | Batch-convert SQLA syntax in .srd files               | `.srd` files                      | `.srd` files (in-place)           |
 | `Powerbuilder\addDBAPrefix.py`      | Prefix function calls with DBA. in .srd files         | MSSQL + `.srd` files              | `.srd` files (in-place)           |
+
+---
+
+## APPENDIX — Conversion Reference (one-time work, already complete)
+
+This section documents how the views, triggers, and procedures were originally converted
+from SQLA dialect to T-SQL. **You do not need to repeat this when setting up a new
+database.** It is kept here for reference if a new object needs to be converted or an
+existing one needs to be revisited.
+
+### View Conversion
+
+1. Run `extractViews.py` → generates `sqla_views_source.sql`
+   - Extracts all DBA-owned view definitions from SQL Anywhere
+   - **For reference only — will NOT run in SQL Server**
+   - Key syntax differences:
+
+     | SQL Anywhere                         | SQL Server T-SQL                  |
+     | ------------------------------------ | --------------------------------- |
+     | `STRING(a, b, c)`                    | `CONCAT(a, b, c)` or `a + b + c`  |
+     | `DATEFORMAT(d, fmt)`                 | `FORMAT(d, fmt)` or `CONVERT()`   |
+     | `TODAY()`                            | `CAST(GETDATE() AS DATE)`         |
+     | `NOW()`                              | `GETDATE()`                       |
+     | `MONTHS(d1, d2)`                     | `DATEDIFF(MONTH, d1, d2)`         |
+     | `YEARS(d1, d2)`                      | `DATEDIFF(YEAR, d1, d2)`          |
+     | `MOD(a, b)`                          | `a % b`                           |
+     | Backtick or double-quote identifiers | `[square brackets]`               |
+
+2. Write the converted T-SQL into `create_views.sql`
+   - One `GO` between each view
+   - Views must appear after any views they depend on
+3. Run `checkViewProgress.py` to track DONE vs PENDING
+4. Test in SQL Server, then commit `create_views.sql` to the repository
+
+### Trigger Conversion
+
+1. Run `extractTriggers.py` → generates `sqla_triggers_source.sql`
+   - **For reference only — will NOT run in SQL Server**
+   - `BEFORE` triggers are flagged with a `WARNING` comment
+   - Key syntax differences:
+
+     | SQL Anywhere                        | SQL Server T-SQL                             |
+     | ----------------------------------- | -------------------------------------------- |
+     | `BEFORE` trigger                    | `INSTEAD OF` trigger                         |
+     | `AFTER` trigger                     | `AFTER` trigger                              |
+     | `REFERENCING OLD AS old NEW AS new` | Uses `deleted` / `inserted` virtual tables   |
+     | `old.column_name`                   | `deleted.column_name`                        |
+     | `new.column_name`                   | `inserted.column_name`                       |
+     | `FOR EACH ROW`                      | (remove — SQL Server triggers are set-based) |
+     | `IF...THEN...END IF`                | `IF...BEGIN...END`                           |
+     | `NOW()`, `TODAY()`                  | `GETDATE()`                                  |
+     | `\|\|` (string concat)              | `+`                                          |
+
+     > `BEFORE` triggers in SQLA modify column values before the row is written.
+     > SQL Server `INSTEAD OF` triggers replace the entire DML operation —
+     > review each `BEFORE` trigger carefully before converting.
+
+2. Create the triggers directly in SQL Server (SSMS), testing each one
+3. Run `checkTriggerProgress.py` to track DONE vs PENDING
+4. Run `exportTriggers.py` → regenerates `create_triggers.sql` from the current SQL Server
+5. Commit the updated `create_triggers.sql` to the repository
+
+### Procedure & Function Conversion
+
+1. Run `extractProcedures.py` → generates `sqla_procedures_source.sql`
+   - **For reference only — will NOT run in SQL Server**
+   - Key syntax differences:
+
+     | SQL Anywhere           | SQL Server T-SQL        |
+     | ---------------------- | ----------------------- |
+     | `IF...THEN...END IF`   | `IF...BEGIN...END`      |
+     | `LOOP...END LOOP`      | `WHILE 1=1 BEGIN...END` |
+     | `LEAVE`                | `BREAK`                 |
+     | `CALL proc()`          | `EXEC proc`             |
+     | `SIGNAL`               | `THROW` / `RAISERROR`   |
+     | `NOW()`, `TODAY()`     | `GETDATE()`             |
+     | `\|\|` (string concat) | `+`                     |
+
+   > Functions land in the `dbo` schema when created with `CREATE FUNCTION`.
+   > After creating each function, add a DBA schema synonym for it (see Phase 7).
+
+2. Create procedures and functions directly in SQL Server (SSMS), testing each one
+3. Add a DBA synonym for each new function (Phase 7)
+4. Run `checkProcedureProgress.py` to track DONE / PENDING / [S] synonym status
+5. Run `exportProcedures.py` → regenerates `create_procedures.sql` from the current SQL Server
+6. Commit the updated `create_procedures.sql` to the repository
